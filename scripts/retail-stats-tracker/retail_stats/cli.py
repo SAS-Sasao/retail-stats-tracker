@@ -28,9 +28,15 @@ parser など）を結線して build / html / measure の3サブコマンドを
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
+import re
 import sys
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
+
+_NUM_RE = re.compile(r"[0-9]+(?:\.[0-9]+)?")
 
 from retail_stats import catalog as catalog_mod
 from retail_stats import config, digest
@@ -247,8 +253,130 @@ def cmd_measure(args: argparse.Namespace) -> int:
     reason_code 別の未解決分布、NFR-04 / NFR-05 の達成率、発表主体別の
     observation 件数などを計測する（実装設計 §8 M3、要件リスク 7-7 の実装先）。
     独立した PoC フェーズを設けず、恒久的な CLI サブコマンドとして残す。
+
+    **母集団は一意 URL の代表 variant**（§4.7 の選択規則）。延べ行で数えると
+    同一記事の再掲が成功／失敗の双方を水増しし、NFR-05 の分母が §4.3.7 の
+    実測（83）と別物になる（ループ設計 §2.3 ⑦ の「単位を取り違えない」）。
     """
-    raise NotImplementedError("実装設計 §8 M3 で実装する（判断の分岐点）")
+    from retail_stats import parser as parser_mod
+    from retail_stats import report, textnorm
+
+    _print_resolved_inputs(args.org)
+    try:
+        cat = catalog_mod.load(config.catalog_path(args.org))
+    except CatalogError as exc:
+        print(f"カタログの検証に失敗しました:\n{exc}", file=sys.stderr)
+        return EXIT_DATA_ERROR
+
+    digest_dir = config.digest_dir(args.org)
+    if not digest_dir.is_dir():
+        print(f"ダイジェストのディレクトリがありません: {digest_dir}", file=sys.stderr)
+        return EXIT_IO_ERROR
+
+    results = _scan_digests(digest_dir, args.since)
+    _print_scan_summary(results)
+
+    rows = [row for r in results for row in r.rows]
+    by_url: dict[str, list] = {}
+    for row in rows:
+        by_url.setdefault(row.url, []).append(row)
+
+    observations, unresolved = [], []
+    for url in sorted(by_url):
+        group = by_url[url]
+        representative = max(
+            group,
+            key=lambda r: (
+                len(_NUM_RE.findall(textnorm.normalize(r.title))), len(r.title), r.title
+            ),
+        )
+        article_id = hashlib.sha256(url.encode()).hexdigest()[:16]
+        result = parser_mod.parse_row(representative, cat, article_id)
+        observations.extend(result.observations)
+        unresolved.extend(result.unresolved)
+
+    articles = [
+        _Article(
+            hashlib.sha256(url.encode()).hexdigest()[:16],
+            tuple(sorted({r.digest_date for r in group})),
+        )
+        for url, group in sorted(by_url.items())
+    ]
+    quality = report.build_quality_summary(observations, unresolved, articles, cat)
+    _print_measure(quality, unresolved, report)
+
+    if args.report_json:
+        Path(args.report_json).write_text(
+            json.dumps(quality, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        print(f"\nレポートを書き出しました: {args.report_json}")
+
+    threshold = args.fail_on_unresolved_rate
+    if threshold is not None:
+        unresolved_rate = 1.0 - quality["nfr05"]["rate"]
+        if unresolved_rate > threshold:
+            print(
+                f"\n未解決率 {unresolved_rate:.1%} が閾値 {threshold:.1%} を超えています"
+                " （NFR-05 の CI ガード）",
+                file=sys.stderr,
+            )
+            return EXIT_DATA_ERROR
+    return EXIT_OK
+
+
+@dataclass(frozen=True)
+class _Article:
+    """measure が duplication を数えるための最小の記事表現（M4 の store.py に移す）。"""
+
+    article_id: str
+    appeared_dates: tuple[str, ...]
+
+
+def _print_measure(quality: dict, unresolved, report) -> None:
+    nfr05, nfr04 = quality["nfr05"], quality["nfr04"]
+    print()
+    print("NFR-05 対象内行の抽出成功率（母集団: 一意 URL の代表 variant）")
+    print(f"  分子 / 分母        : {nfr05['numerator']} / {nfr05['denominator']}")
+    print(f"  達成率             : {nfr05['rate']:.1%}  （目標 {nfr05['target']:.0%}）")
+    print(f"  判定               : {'達成' if nfr05['met'] else '**未達**'}")
+
+    print()
+    print("NFR-04 主要 4 業態の月次既存店指標")
+    print(f"  カバー             : {len(nfr04['covered'])} / 4  {nfr04['covered']}")
+    if nfr04["missing"]:
+        print(f"  **欠落**           : {nfr04['missing']}")
+    print(f"  observation 件数   : {nfr04['observation_count']}")
+    print(f"  達成率             : {nfr04['rate']:.1%}  （目標 {nfr04['target']:.0%}）")
+    print(f"  判定               : {'達成' if nfr04['met'] else '**未達**'}")
+
+    print()
+    print("reason_code 別の件数")
+    for code, count in quality["by_reason_code"].items():
+        mark = "  （分母から除外）" if code == "out_of_scope" else ""
+        print(f"  {code:<20} {count:>4}{mark}")
+    oos = quality["out_of_scope_breakdown"]
+    print(f"    ├ 個社開示       {oos['company_disclosure']:>4}")
+    print(f"    └ 非統計記事     {oos['non_statistical']:>4}")
+
+    print()
+    print("発表主体別の observation 件数")
+    for authority, count in quality["by_authority"].items():
+        print(f"  {authority:<32} {count:>4}")
+    multi = quality["multi_authority_segments"]
+    print(f"  複数主体を持つ業態 : {multi if multi else '（なし）'}")
+
+    dup = quality["duplication"]
+    print()
+    print(f"重複: 一意 {dup['unique_articles']} / 延べ {dup['total_rows']} "
+          f"/ 重複 {dup['duplicate_rows']} / 最大掲載 {dup['max_appeared']} 日")
+
+    print()
+    print("未解決行の原文（reason_code 別・上位 20 件）")
+    for code, samples in sorted(report.unresolved_samples(unresolved).items()):
+        print(f"  [{code}] {len(samples)} 件")
+        for line in samples[:20]:
+            print(f"      {line[:110]}")
 
 
 def main(argv: list[str] | None = None) -> int:
