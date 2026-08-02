@@ -500,6 +500,16 @@ class TestCatalogPathResolution(unittest.TestCase):
         )
         self.assertTrue(config.HTML_RELPATH.startswith("docs/retail-stats/"))
 
+    def test_resolved_inputs_includes_delivery_target(self):
+        """配信先が報告に含まれること（D-G）。
+
+        `--dry-run` の出力から「どこに書き出してどこで見えるのか」を追えないと、
+        Pages に載らない場所へ出力していても気づけない。
+        """
+        info = config.resolved_inputs()
+        self.assertEqual(info["html_output_path"], str(config.html_output_path()))
+        self.assertEqual(info["html_public_url"], config.PUBLIC_SITE_URL)
+
     def test_org_slug_is_not_a_path(self):
         """`--org` は組織スラグのまま（実装設計 §2.5）。パスを受け取らない。"""
         root = config.find_repo_root()
