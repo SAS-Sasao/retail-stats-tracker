@@ -13,11 +13,11 @@
 
 | ファイル | コピー元パス | 作成日 | 最終同期 |
 |---------|------------|--------|---------|
-| `requirements.md` | `.companies/domain-tech-collection/docs/research/retail-stats-tracker-requirements.md` | 2026-07-26 | `2da1c48`（初回） |
-| `implementation-design.md` | `.companies/domain-tech-collection/docs/research/retail-stats-tracker-design.md` | 2026-07-26 | `2da1c48`（初回） |
+| `requirements.md` | `.companies/domain-tech-collection/docs/research/retail-stats-tracker-requirements.md` | 2026-07-26 | **`6a05a3d`（v0.1.2）** |
+| `implementation-design.md` | `.companies/domain-tech-collection/docs/research/retail-stats-tracker-design.md` | 2026-07-26 | **`6a05a3d`** |
 | `loop-engineering-design.md` | `.companies/domain-tech-collection/docs/research/retail-stats-tracker-loop-engineering-design.md` | 2026-07-26 | **`6a9843c`（2026-08-02 再取得）** |
 | `cicd-design.md` | `.companies/domain-tech-collection/docs/research/retail-stats-tracker-cicd-design.md` | 2026-07-26 | `2da1c48`（初回） |
-| `retail-monthly-kpi-catalog.md` | `.companies/domain-tech-collection/docs/retail-domain/retail-monthly-kpi-catalog.md` | 2026-07-26 | `2da1c48`（初回） |
+| `retail-monthly-kpi-catalog.md` | `.companies/domain-tech-collection/docs/retail-domain/retail-monthly-kpi-catalog.md` | 2026-07-26 | **`6a05a3d`** |
 
 コピーにあたり、5 文書間の相互参照（ファイル名によるリンク）のみを新ファイル名に機械的に置換した。それ以外の本文・数値・結論は原文のまま変更していない。**再取得時も同じ置換のみを適用する。**
 
@@ -26,6 +26,7 @@
 | 日付 | 対象 | コミット | 内容 |
 |---|---|---|---|
 | 2026-08-02 | `loop-engineering-design.md` | `6a9843c` | §2.3 ② の C4 に `発表主体` を追加 + C11 / C12 を新設（[Issue #724](https://github.com/SAS-Sasao/cc-sier-organization/issues/724) → [PR #725](https://github.com/SAS-Sasao/cc-sier-organization/pull/725)）。詳細は D-C |
+| 2026-08-02 | `requirements.md` / `implementation-design.md` / `retail-monthly-kpi-catalog.md` | `6a05a3d` | **要件 v0.1.1 → v0.1.2**。reason_code 9 値化 / V12 の値種別緩和 / §4.3.7 判定木に残余語ガード（[#728](https://github.com/SAS-Sasao/cc-sier-organization/issues/728) / [#729](https://github.com/SAS-Sasao/cc-sier-organization/issues/729) → [PR #730](https://github.com/SAS-Sasao/cc-sier-organization/pull/730)）。詳細は C-2 / C-3 |
 
 **同期の確認方法**（5 文書すべての乖離を検出する）:
 

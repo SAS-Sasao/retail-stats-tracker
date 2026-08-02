@@ -41,8 +41,15 @@ NFR05_TARGET = 0.80
 MAJOR4_SEGMENTS = ("shopping-center", "department-store", "chain-store", "convenience-store")
 EXISTING_STORE_METRIC = "existing-store-sales-yoy"
 
-# 分母に残る失敗（対象内）。out_of_scope だけが分母から外れる。
-IN_SCOPE_REASONS = ("no_metric_match", "no_numeric", "no_segment_match", "ambiguous_period")
+# 分母に残る失敗（対象内）。要件 v0.1.2 §4.2 の 3 群分類に対応する。
+#   除外: out_of_scope / company_disclosure（対象外）
+#   除外: no_metric_match_in_multi_value（値単位の退避。行は成功しているため
+#         分母にも分子にも加算しない。加算すると二重計上になる）
+IN_SCOPE_REASONS = (
+    "no_metric_match", "no_numeric", "no_segment_match", "ambiguous_period",
+    "low_confidence", "llm_schema_error",
+)
+EXCLUDED_REASONS = ("out_of_scope", "company_disclosure")
 
 # out_of_scope の下位分類は**永続化しない**。raw_line から同じ判定木で
 # 再計算する（§4.3.7 の「下位分類は永続化しない」）。判定木は決定論的なので
@@ -88,6 +95,10 @@ def build_quality_summary(
         for u in unresolved_rows
         if u.reason_code == "out_of_scope"
     )
+    # 残余語ガードで落ちた行は第 3 の区分として別に数える（§6.4 P3）
+    breakdown["residual_guard"] = sum(
+        1 for u in unresolved_rows if u.reason_code == "company_disclosure"
+    )
 
     appeared = [len(a.appeared_dates) for a in articles]
     total_rows = sum(appeared)
@@ -106,6 +117,7 @@ def build_quality_summary(
         "out_of_scope_breakdown": {
             "company_disclosure": breakdown.get("company_disclosure", 0),
             "non_statistical": breakdown.get("non_statistical", 0),
+            "residual_guard": breakdown.get("residual_guard", 0),
         },
         "duplication": {
             "unique_articles": len(articles),

@@ -100,8 +100,28 @@ class TestBreakdowns(unittest.TestCase):
             unres("out_of_scope", "| 2 | 買い物は「コスパ」、家事は「タイパ」 |", "u2"),
         ], [], CATALOG)
         self.assertEqual(
-            q["out_of_scope_breakdown"], {"company_disclosure": 1, "non_statistical": 1}
+            q["out_of_scope_breakdown"],
+            {"company_disclosure": 1, "non_statistical": 1, "residual_guard": 0},
         )
+
+    def test_residual_guard_rows_are_counted_separately(self):
+        """残余語ガードで落ちた行は P3 の第 3 区分として数える（§6.4 / v0.1.2）。"""
+        q = report.build_quality_summary([], [
+            unres("company_disclosure", "| 1 | ドラッグストア／2月既存店売上ツルハ4.0%増 |", "u1"),
+        ], [], CATALOG)
+        self.assertEqual(q["out_of_scope_breakdown"]["residual_guard"], 1)
+        self.assertEqual(q["nfr05"]["denominator"], 0, "対象外は分母に加算しない")
+
+    def test_multi_value_leftover_is_not_counted_in_the_denominator(self):
+        """値単位の退避は分母にも分子にも加算しない（二重計上を避ける。v0.1.2）。"""
+        q = report.build_quality_summary(
+            [obs("shopping-center", "existing-store-sales-yoy")],
+            [unres("no_metric_match_in_multi_value", uid="u1")],
+            [article()], CATALOG,
+        )
+        self.assertEqual(q["nfr05"], {
+            "denominator": 1, "numerator": 1, "rate": 1.0, "target": 0.80, "met": True,
+        })
 
     def test_multi_authority_segments(self):
         """要件 7-14 の効果確認。発表主体が並立する業態を名指しする。"""

@@ -88,6 +88,10 @@ STAT_VOCAB_RE = re.compile(
 )
 
 
+# 残余語が**この文字数以上**なら「未解決の残余語」とみなす（実装設計 §4.3.7）。
+# 1 文字の取りこぼしを個社判定に使わないための閾値。
+RESIDUAL_MIN_LENGTH = 2
+
 # 残余語の判定で無視する助詞・記号（cc-sier #728）。
 # これらしか残らなければ「修飾語なし」とみなす。
 _FILLER_RE = re.compile(r"[のはがをにでとやもへ、。・：:／/｜|（）()「」\s　＝=~\-—–]")
@@ -387,16 +391,16 @@ def parse_row(row: DigestRow, catalog: Catalog, article_id: str) -> ParseResult:
             continue
         # **値の直前に未知の修飾語があれば、その値は業態の観測値としない**
         # （cc-sier #728）。`ドラッグストア／…ツルハ4.0%増` の `ツルハ` が該当。
-        if residual_after_known_terms(window, alias, catalog):
+        if len(residual_after_known_terms(window, alias, catalog)) >= RESIDUAL_MIN_LENGTH:
             has_unknown_modifier = True
             continue
         matched.append((token, metric, metric_penalty, window))
 
-    # (a) 個社の並記 — 行全体を out_of_scope に落とす（カタログ §1.4）。
-    #     衝突検出を発火させるために業態値を 2 件作ってから潰すのではなく、
-    #     そもそも記録すべきでない値として扱う。
+    # (a) 個社の並記 — 行全体を company_disclosure に落とす（実装設計 §4.3.7）。
+    #     業態は解決できているが値の主語が個社なので、`out_of_scope`（業態が
+    #     解決できなかった行）とは別コードで区別する。どちらも分母からは外れる。
     if has_unknown_modifier:
-        return ParseResult((), (_unresolved(row, article_id, "out_of_scope"),))
+        return ParseResult((), (_unresolved(row, article_id, "company_disclosure"),))
 
     if not matched and not qualitative and not flat:
         return ParseResult((), (_unresolved(row, article_id, "no_metric_match"),))

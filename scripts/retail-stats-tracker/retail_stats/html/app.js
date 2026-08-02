@@ -256,8 +256,11 @@
   }
 
   /* ---- SC-06 データ品質（P1 / P2 / P3）------------------------------------ */
+  // P2 に出す reason_code（要件 v0.1.2 §4.2 の 3 群のうち「未解決（要改善）」＋
+  // 「値単位の退避」）。「対象外」は P3 に分ける。
   var IN_SCOPE_REASONS = ["no_segment_match", "no_metric_match", "no_metric_match_in_multi_value",
                           "no_numeric", "ambiguous_period", "low_confidence", "llm_schema_error"];
+  var EXCLUDED_REASONS = ["out_of_scope", "company_disclosure"];
   function renderQuality() {
     var q = D.quality, n5 = q.nfr05, n4 = q.nfr04;
     $("p1").innerHTML =
@@ -286,17 +289,25 @@
     });
     $("p2").innerHTML = p2;
 
-    var oos = D.unresolved.filter(function (u) { return u.reason_code === "out_of_scope"; });
-    var byKind = { company_disclosure: [], non_statistical: [] };
-    oos.forEach(function (u) { (byKind[u.out_of_scope_kind] || []).push(u); });
+    var oos = D.unresolved.filter(function (u) {
+      return EXCLUDED_REASONS.indexOf(u.reason_code) >= 0; });
+    var byKind = { company_disclosure: [], non_statistical: [], residual_guard: [] };
+    oos.forEach(function (u) {
+      // 残余語ガードで落ちた行（company_disclosure）は第 3 の区分（§6.4 P3）
+      var kind = u.reason_code === "company_disclosure" ? "residual_guard" : u.out_of_scope_kind;
+      (byKind[kind] || []).push(u);
+    });
     $("p3").innerHTML =
       "<h3>P3 対象外（意図的除外）</h3>" +
       "<p class='notice'>これらは抽出の失敗ではなく、本システムの対象範囲外として意図的に除外した記事です。" +
       "NFR-05 の分母には含みません。</p>" +
       "<p>個社開示 <b>" + byKind.company_disclosure.length + "</b> 件 ／ " +
-      "非統計記事 <b>" + byKind.non_statistical.length + "</b> 件</p>" +
+      "非統計記事 <b>" + byKind.non_statistical.length + "</b> 件 ／ " +
+      "残余語ガード <b>" + byKind.residual_guard.length + "</b> 件</p>" +
       Object.keys(byKind).map(function (k) {
-        return "<details><summary>" + (k === "company_disclosure" ? "個社開示" : "非統計記事") +
+        var label = k === "company_disclosure" ? "個社開示（業態未解決）"
+          : k === "residual_guard" ? "個社の並記（残余語ガード・業態は解決）" : "非統計記事";
+        return "<details><summary>" + label +
           "（" + byKind[k].length + " 件・代表 10 件）</summary>" +
           byKind[k].slice(0, 10).map(function (u) {
             return "<pre>" + esc(u.raw_line) + "</pre>"; }).join("") + "</details>";

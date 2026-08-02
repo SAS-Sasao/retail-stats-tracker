@@ -12,13 +12,16 @@ import re
 from dataclasses import dataclass
 
 # reason_code の enum 7 値（要件定義 §4.2 / v0.1.1 で out_of_scope を追加）。
-# **2026-08-02 追加（cc-sier #728）**: no_metric_match_in_multi_value。
-# 1 行に複数の値がある記事で、業態としては正当だが指標を解決できなかった値を
-# 退避する先。FR-10（未解決行を破棄しない）は無条件の絶対条件であり、
-# 「observation にも unresolved にも現れない値」を残さないために必要になった。
-# 要件 §4.2 の enum 拡張は cc-sier 側で実施予定（#728）。
+# 要件 v0.1.2 で **9 値**（cc-sier #728 / #729 で確定）。NFR-05 の分母への
+# 影響で 3 群に分かれる（要件 §4.2）。
+#   分母に残る失敗: no_metric_match / no_segment_match / no_numeric /
+#                   ambiguous_period / low_confidence / llm_schema_error
+#   対象外（除外）: out_of_scope / company_disclosure
+#   値単位の退避  : no_metric_match_in_multi_value
+#                   （行は抽出に成功しているので分母にも分子にも加算しない）
 REASON_CODES = (
     "no_metric_match_in_multi_value",
+    "company_disclosure",
     "no_metric_match",
     "no_segment_match",
     "no_numeric",
