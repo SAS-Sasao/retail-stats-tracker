@@ -218,6 +218,82 @@ class TestUnresolvedClassification(unittest.TestCase):
         self.assertEqual(r.unresolved[0].last_attempted_at, "2026-04-02")
 
 
+class TestMultiValueRows(unittest.TestCase):
+    """1 行に複数の値がある記事の扱い（cc-sier #728 の確定方針）。
+
+    **FR-10 は無条件の絶対条件。** 値トークンが observation にも unresolved にも
+    現れない状態は、いかなる理由があっても許容しない。
+    """
+
+    def test_company_enumeration_becomes_out_of_scope(self):
+        """(a) 個社の並記 → 行全体を out_of_scope。1 件目も業態の観測値ではない。
+
+        `ツルハ` は指標別名・業態別名・期間表現のいずれでもない残余語であり、
+        値の主語が個社であることを示す。カタログ §1.4 が「個社決算は
+        out_of_scope 分類とする」と定めている。
+        """
+        for title, pub in [
+            ("ドラッグストア／2月既存店売上ツルハ4.0%増、コスモス薬品7.0%増", "2026-03-31"),
+            ("スーパーマーケット／3月既存店売上ライフ1.3%増、ヤオコー2.1%増", "2026-04-29"),
+            ("ファミレス／3月既存店 すかいらーく2.3%増、サイゼリヤ15.5%増", "2026-04-21"),
+        ]:
+            with self.subTest(title=title):
+                r = run(title, pub)
+                self.assertEqual(r.observations, (), "個社の値が業態の観測値になっている")
+                self.assertEqual(r.unresolved[0].reason_code, "out_of_scope")
+
+    def test_segment_internal_breakdown_keeps_the_first_value(self):
+        """(b) 業態内の内訳 → 1 件目は正当な観測値、2 件目は退避する。
+
+        `家電大型専門店／4月の販売額は12.1％増` は経産省が発表する業態全体の
+        販売額であり、`生活家電15.8％増` はその内訳カテゴリ。1 件目を
+        out_of_scope に落とすと本来取るべきデータを捨てることになる。
+        """
+        r = run("家電大型専門店／4月の販売額は12.1％増、生活家電が15.8％増に（経産省調べ）", "2026-05-30")
+        self.assertEqual(
+            [(o.segment_id, o.metric_id, o.value) for o in r.observations],
+            [("electronics-retailer", "sales-amount-yoy", 12.1)],
+        )
+        self.assertEqual(
+            [u.reason_code for u in r.unresolved], ["no_metric_match_in_multi_value"],
+            "解決できなかった値が退避されていない（FR-10 違反）",
+        )
+
+    def test_no_value_is_ever_lost(self):
+        """FR-10: 値がある行は observation か unresolved のどちらかに必ず現れる。"""
+        for title, pub in [
+            ("ドラッグストア／2月既存店売上ツルハ4.0%増、コスモス薬品7.0%増", "2026-03-31"),
+            ("家電大型専門店／4月の販売額は12.1％増、生活家電が15.8％増に（経産省調べ）", "2026-05-30"),
+            ("百貨店／3月の販売額2.2％増の5547億円、既存店は3.4％増（経産省調べ）", "2026-05-08"),
+        ]:
+            with self.subTest(title=title):
+                r = run(title, pub)
+                self.assertTrue(r.observations or r.unresolved, "値が痕跡なく消えている")
+
+    def test_comparison_basis_is_not_an_unknown_word(self):
+        """`前年度比` は比較基準語であって主語を差し替える修飾語ではない。"""
+        r = run("ECプラットフォーム市場規模（2025年度）は前年度比5.8%増の約2398億円", "2026-07-25")
+        self.assertTrue(r.observations)
+        self.assertEqual(r.observations[0].segment_id, "ec-platform")
+
+    def test_shortened_segment_name_is_not_an_unknown_word(self):
+        """`小売業` はカタログの別名 `小売業全体` の短縮形。
+
+        カタログに短縮形の別名が無いことを、パーサ側で誤判定に変えない。
+        設計 §4.3.6 はこの行を meti-commerce-dynamics の正当な観測例としている。
+        """
+        r = run("経済産業省／2月の商業動態統計、小売業販売額は0.2％減の12兆1550億円", "2026-04-01")
+        self.assertTrue(r.observations)
+        self.assertEqual(r.observations[0].segment_id, "meti-commerce-dynamics")
+
+    def test_residual_helper(self):
+        r = run("ドラッグストア／2月既存店売上ツルハ4.0%増", "2026-03-31")
+        self.assertEqual(
+            parser.residual_after_known_terms("2月既存店売上ツルハ", "既存店売上", CATALOG), "ツルハ"
+        )
+        self.assertEqual(parser.residual_after_known_terms("4月の販売額は", "販売額", CATALOG), "")
+
+
 class TestValueTypeConsistency(unittest.TestCase):
     """率の値を絶対額の指標に入れない（カタログ §2.2「絶対額か率かでさらに分岐」）。"""
 

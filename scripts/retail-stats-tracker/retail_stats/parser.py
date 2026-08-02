@@ -88,6 +88,17 @@ STAT_VOCAB_RE = re.compile(
 )
 
 
+# 残余語の判定で無視する助詞・記号（cc-sier #728）。
+# これらしか残らなければ「修飾語なし」とみなす。
+_FILLER_RE = re.compile(r"[のはがをにでとやもへ、。・：:／/｜|（）()「」\s　＝=~\-—–]")
+
+# **比較基準語**。`前年度比5.8%増` の `前年度比` は「何と比べたか」を示す語であり、
+# 主語を別のものに差し替える修飾語ではない。業態名でも指標名でもないため
+# 残余語の判定から除く（cc-sier #728 の「不明語」には当たらない）。
+# 業態名・指標名ではないので、ここに置いてもカタログ駆動（FR-03）に反しない。
+_COMPARISON_BASIS_RE = re.compile(r"前年同月比|前年度比|前年比|前月比|前期比|前年同期比|同月比")
+
+
 @dataclass(frozen=True)
 class ParseResult:
     """1 行のパース結果。observations と unresolved は排他ではない。"""
@@ -251,6 +262,39 @@ def _collect_values(norm: str) -> list[_Value]:
     return found
 
 
+def residual_after_known_terms(window: str, metric_alias: str, catalog: Catalog) -> str:
+    """左窓から**既知の語**を取り除いた残りを返す（cc-sier #728 の判定基準）。
+
+    取り除くのは 指標別名 / 業態別名 / 期間表現 / 助詞・記号。残ったものが
+    「指標別名・業態別名・期間表現のいずれにも該当しない残余語」である。
+
+        `2月既存店売上ツルハ` → 既存店売上 と 2月 を除去 → **`ツルハ`** が残る
+        `4月の販売額は`       → 販売額 と 4月 を除去   → 残余なし
+
+    前者は個社の並記（値は業態の観測値ではない）、後者は業態内の内訳。
+    §4.3.3 の主語位置ガードが「主語の位置」で個社を弾くのに対し、
+    こちらは「値の直前の修飾語」で弾く。
+    """
+    text = window
+    if metric_alias:
+        text = text.replace(metric_alias, "")
+    for alias, _seg_id in catalog.segment_alias_index():   # 長さ降順
+        text = text.replace(alias, "")
+    text = period_mod.strip_period_expressions(text)
+    text = _COMPARISON_BASIS_RE.sub("", text)
+    text = _FILLER_RE.sub("", text)
+    if not text:
+        return ""
+    # 残余が業態別名の一部（短縮形）なら業態への言及であって不明語ではない。
+    # `小売業販売額` の `小売業` はカタログの別名 `小売業全体` の短縮形であり、
+    # 設計 §4.3.6 はこの行を meti-commerce-dynamics の正当な観測例としている。
+    # カタログに短縮形の別名が無いことを、パーサ側で誤判定に変えない。
+    for alias, _seg_id in catalog.segment_alias_index():
+        if text in alias:
+            return ""
+    return text
+
+
 def _left_window(norm: str, start: int, prev_end: int) -> str:
     """左窓を切り出す（§4.3.1）。
 
@@ -330,14 +374,29 @@ def parse_row(row: DigestRow, catalog: Catalog, article_id: str) -> ParseResult:
     # "1兆円クラブ"入り…`）が ambiguous_period に落ち、設計が no_metric_match の
     # 例として挙げている分類と食い違う。
     matched: list[tuple[_Value, Metric, float, str]] = []
+    unmatched_values = 0
+    has_unknown_modifier = False
     prev_end = 0
     for token in values:
         window = _left_window(norm, token.start, prev_end)
         prev_end = token.end
         want = "ratio" if token.unit == "percent_yoy" else "absolute"
-        metric, metric_penalty, _alias = resolve_metric(window, catalog, want)
-        if metric is not None:
-            matched.append((token, metric, metric_penalty, window))
+        metric, metric_penalty, alias = resolve_metric(window, catalog, want)
+        if metric is None:
+            unmatched_values += 1
+            continue
+        # **値の直前に未知の修飾語があれば、その値は業態の観測値としない**
+        # （cc-sier #728）。`ドラッグストア／…ツルハ4.0%増` の `ツルハ` が該当。
+        if residual_after_known_terms(window, alias, catalog):
+            has_unknown_modifier = True
+            continue
+        matched.append((token, metric, metric_penalty, window))
+
+    # (a) 個社の並記 — 行全体を out_of_scope に落とす（カタログ §1.4）。
+    #     衝突検出を発火させるために業態値を 2 件作ってから潰すのではなく、
+    #     そもそも記録すべきでない値として扱う。
+    if has_unknown_modifier:
+        return ParseResult((), (_unresolved(row, article_id, "out_of_scope"),))
 
     if not matched and not qualitative and not flat:
         return ParseResult((), (_unresolved(row, article_id, "no_metric_match"),))
@@ -411,6 +470,14 @@ def parse_row(row: DigestRow, catalog: Catalog, article_id: str) -> ParseResult:
                 article_id, chosen.confidence, row.digest_date, streak=int(streak.group("n")),
             )
 
+    # (b) 業態としては正当だが指標を解決できなかった値を**必ず退避する**。
+    #     FR-10 は無条件の絶対条件であり、observation にも unresolved にも
+    #     現れない値を残さない（cc-sier #728）。将来カタログに内訳カテゴリを
+    #     追加すれば回収できる形で残す。
+    leftovers: tuple[UnresolvedRow, ...] = ()
+    if unmatched_values and observations:
+        leftovers = (_unresolved(row, article_id, "no_metric_match_in_multi_value"),)
+
     if detect_collision(observations):
         # 衝突は silent な上書きを生む。閾値未満に固定して LLM へ回す（§4.3.5）
         observations = [
@@ -423,4 +490,4 @@ def parse_row(row: DigestRow, catalog: Catalog, article_id: str) -> ParseResult:
             for o in observations
         ]
 
-    return ParseResult(tuple(observations), ())
+    return ParseResult(tuple(observations), leftovers)

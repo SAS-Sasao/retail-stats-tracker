@@ -12,7 +12,13 @@ import re
 from dataclasses import dataclass
 
 # reason_code の enum 7 値（要件定義 §4.2 / v0.1.1 で out_of_scope を追加）。
+# **2026-08-02 追加（cc-sier #728）**: no_metric_match_in_multi_value。
+# 1 行に複数の値がある記事で、業態としては正当だが指標を解決できなかった値を
+# 退避する先。FR-10（未解決行を破棄しない）は無条件の絶対条件であり、
+# 「observation にも unresolved にも現れない値」を残さないために必要になった。
+# 要件 §4.2 の enum 拡張は cc-sier 側で実施予定（#728）。
 REASON_CODES = (
+    "no_metric_match_in_multi_value",
     "no_metric_match",
     "no_segment_match",
     "no_numeric",
@@ -258,19 +264,40 @@ def _validate_aliases(rows, field: str) -> list[str]:
     V12 は決定論パースの解決可能性に直結する。別名が衝突していると
     どの ID に寄せるかがコード側の暗黙のルールになり、NFR-09
     （カタログ追記だけで完結する）が崩れる（実装設計 §3.3）。
+
+    **2026-08-02 改訂（cc-sier #729）**: `値種別`（ratio / absolute）が異なる
+    指標間では同一別名を許す。記事の実表記では同じ語が率と絶対額の両方を指す
+    （`売上高3.2％増` は率 / `売上高1兆4505億円` は絶対額）。この曖昧性は
+    記事側に実在するものであり、カタログ §2.2 も「絶対額か率かでさらに分岐」と
+    分岐条件を言語化している。パーサは値の型で候補を絞るため一意に決まる。
+
+    **値種別が同一の指標間では引き続き禁止する。** ここを緩めると値の型で
+    絞っても一意に決まらず、「どの ID に寄せるか」が結局コード側の暗黙ルールに
+    なる。NFR-09 が崩れる境界はここである。
     """
     violations: list[str] = []
-    owners: dict[str, list[str]] = {}
+    owners: dict[str, list] = {}
     for row in rows:
         identifier = _id_of(row, field)
         if not row.aliases:
             violations.append(f"[V11] 別名が空です: {field}={identifier}")
         for alias in row.aliases:
-            owners.setdefault(alias, []).append(identifier)
-    for alias, ids in owners.items():
-        if len(set(ids)) > 1:
-            joined = " と ".join(f"{field}={i}" for i in sorted(set(ids)))
-            violations.append(f"[V12] 別名 {alias!r} が {joined} で重複しています")
+            owners.setdefault(alias, []).append((identifier, getattr(row, "value_type", None)))
+    for alias, holders in owners.items():
+        distinct = {i for i, _ in holders}
+        if len(distinct) <= 1:
+            continue
+        # 値種別ごとに分けて、同一値種別の中で重複していれば違反
+        by_type: dict[object, set] = {}
+        for identifier, value_type in holders:
+            by_type.setdefault(value_type, set()).add(identifier)
+        for value_type, ids in by_type.items():
+            if len(ids) > 1:
+                joined = " と ".join(f"{field}={i}" for i in sorted(ids))
+                suffix = f"（値種別={value_type}）" if value_type is not None else ""
+                violations.append(
+                    f"[V12] 別名 {alias!r} が {joined} で重複しています{suffix}"
+                )
     return violations
 
 

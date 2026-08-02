@@ -366,6 +366,35 @@ class TestCatalogValidation(_CatalogTestCase):
         message = self.assert_violation(_build_catalog(metrics=metrics), "[V12]")
         self.assertIn("売上高", message)
 
+    def test_v12_allows_same_alias_when_value_type_differs(self):
+        """V12 改訂（cc-sier #729）: 値種別が異なれば同一別名を許す。
+
+        記事の実表記では同じ語が率と絶対額の両方を指す
+        （`売上高3.2％増` は率 / `売上高1兆4505億円` は絶対額）。
+        パーサは値の型で候補を絞るため一意に決まる。
+        """
+        metrics = [
+            _met(metric_id="`rate-metric`", 名称="率指標", 別名="売上高", 値種別="ratio", 単位="%"),
+            _met(metric_id="`amount-metric`", 名称="額指標", 別名="売上高", 値種別="absolute", 単位="億円"),
+        ]
+        result = self.load_text(_build_catalog(metrics=metrics))
+        self.assertEqual(
+            sorted({mid for a, mid in result.metric_alias_index() if a == "売上高"}),
+            ["amount-metric", "rate-metric"],
+        )
+
+    def test_v12_still_forbids_same_alias_within_one_value_type(self):
+        """**値種別が同一の指標間では引き続き禁止する。**
+
+        ここを緩めると値の型で絞っても一意に決まらず、「どの ID に寄せるか」が
+        コード側の暗黙ルールになる。NFR-09 が崩れる境界（cc-sier #729）。
+        """
+        metrics = [
+            _met(metric_id="`metric-a`", 名称="指標A", 別名="売上高", 値種別="ratio"),
+            _met(metric_id="`metric-b`", 名称="指標B", 別名="売上高", 値種別="ratio"),
+        ]
+        self.assert_violation(_build_catalog(metrics=metrics), "[V12]")
+
     def test_v12_allows_same_alias_across_segment_and_metric_indexes(self):
         """別名の一意性は「業態内 / 指標内」で見る。索引をまたぐ重複は許す。"""
         text = _build_catalog(
