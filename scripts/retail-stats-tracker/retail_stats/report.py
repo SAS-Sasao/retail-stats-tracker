@@ -270,14 +270,83 @@ def build_series(observations, articles, unresolved_rows, catalog, meta) -> dict
     }
 
 
-def build_diff_report(before: dict, after: dict) -> dict:
+def build_diff_report(upsert_results, unresolved_rows, quality: dict) -> dict:
     """新規 / 更新 / 未解決の件数と、値が変わった observation の前後を出す
     （要件リスク 7-8、`--report-json` の出力元。FR-22）。
 
-    件数0の日はレポートを出さない設計とする（H2 のトリアージ負荷を
-    減らすため。loop-engineering-design.md §1.1）。
+    **値が変わった observation は全件列挙する。** 速報→確報の改定や記事の
+    誤記訂正を人間が追えるようにするため（要件リスク 7-8）。5 項 natural key に
+    なったことで上書きは同一発表主体内でのみ起こり、解釈が明確になっている
+    （実装設計 §5.3）。
+
+    `has_changes` が False の日はレポートを出さない（H2 のトリアージ負荷を
+    減らすため。ループ設計 §1.1「通知の希少性そのものが観測の質」）。
     """
-    raise NotImplementedError("M7 で実装する（実装設計 §8 M7）")
+    actions = Counter(r.action for r in upsert_results)
+    value_changes = [
+        {
+            "natural_key": r.key,
+            "before": {"value": r.before.value, "confidence": r.before.confidence,
+                       "article_id": r.before.article_id, "raw": r.before.raw_expression},
+            "after": {"value": r.after.value, "confidence": r.after.confidence,
+                      "article_id": r.after.article_id, "raw": r.after.raw_expression},
+        }
+        for r in upsert_results
+        if r.action == "updated" and r.before is not None and r.before.value != r.after.value
+    ]
+    value_changes.sort(key=lambda c: c["natural_key"])
+    skipped = [r.key for r in upsert_results if r.action == "skipped_manual"]
+
+    return {
+        "schema_version": 1,
+        "counts": {
+            "created": actions.get("created", 0),
+            "updated": actions.get("updated", 0),
+            "unchanged": actions.get("unchanged", 0),
+            "skipped_manual": actions.get("skipped_manual", 0),
+            "unresolved": len(unresolved_rows),
+        },
+        "value_changes": value_changes,
+        "skipped_manual_keys": sorted(skipped),
+        "nfr05": quality["nfr05"],
+        "nfr04": quality["nfr04"],
+        # 差分が無い日はレポートを出さない判断に使う
+        "has_changes": bool(
+            actions.get("created", 0) or actions.get("updated", 0) or value_changes
+        ),
+    }
+
+
+def format_diff_report_markdown(report: dict) -> str:
+    """差分レポートを PR 本文向けの Markdown に整形する（FR-22 / §8 M7）。"""
+    c = report["counts"]
+    n5, n4 = report["nfr05"], report["nfr04"]
+    lines = [
+        "## retail-stats 取り込み結果",
+        "",
+        f"| 新規 | 更新 | 変更なし | 手動保護 | 未解決 |",
+        f"|---:|---:|---:|---:|---:|",
+        f"| {c['created']} | {c['updated']} | {c['unchanged']} | {c['skipped_manual']} | {c['unresolved']} |",
+        "",
+        f"- **NFR-05** 対象内の抽出成功率: {n5['numerator']}/{n5['denominator']} = "
+        f"{n5['rate'] * 100:.1f}%（目標 {n5['target'] * 100:.0f}% / "
+        f"**{'達成' if n5['met'] else '未達'}**）",
+        f"- **NFR-04** 主要 4 業態の月次既存店: {len(n4['covered'])}/4 = "
+        f"{n4['rate'] * 100:.0f}%（目標 {n4['target'] * 100:.0f}% / "
+        f"**{'達成' if n4['met'] else '未達'}**）",
+    ]
+    if report["value_changes"]:
+        lines += ["", f"### 値が変わった観測（{len(report['value_changes'])} 件）", "",
+                  "速報→確報の改定か、記事の誤記訂正のいずれかです（要件リスク 7-8）。", "",
+                  "| natural key | 変更前 | 変更後 |", "|---|---:|---:|"]
+        for change in report["value_changes"]:
+            key = change["natural_key"].replace("\x1f", " / ")
+            lines.append(f"| `{key}` | {change['before']['value']} | {change['after']['value']} |")
+    if report["skipped_manual_keys"]:
+        lines += ["", f"### 手動補正により保護された観測（{len(report['skipped_manual_keys'])} 件）", "",
+                  "FR-23 により自動 upsert では上書きしていません。", ""]
+        lines += [f"- `{k.replace(chr(31), ' / ')}`" for k in report["skipped_manual_keys"]]
+    return "\n".join(lines) + "\n"
 
 
 def build_run_record(run_id: str, started_at: str, finished_at: str, **stats) -> dict:

@@ -242,6 +242,7 @@ def cmd_build(args: argparse.Namespace) -> int:
     articles: dict = {}
     unresolved: dict = {}
     actions = Counter()
+    upsert_results: list = []
     for url in sorted(by_url):
         group = sorted(by_url[url], key=lambda r: r.digest_date)
         for row in group:
@@ -263,7 +264,9 @@ def cmd_build(args: argparse.Namespace) -> int:
         )
         result = parser_mod.parse_row(target, cat, aid)
         for obs in result.observations:
-            actions[store.upsert(observations, obs).action] += 1
+            upsert_result = store.upsert(observations, obs)
+            upsert_results.append(upsert_result)
+            actions[upsert_result.action] += 1
         for row in result.unresolved:
             store.merge_unresolved(unresolved, row, aid)
 
@@ -331,6 +334,37 @@ def cmd_build(args: argparse.Namespace) -> int:
             print(f"  {name:<24} {path.stat().st_size:>8,} bytes")
     print(f"\n配信 HTML: {html_path}  ({html_path.stat().st_size:,} bytes / 上限 2 MB)")
     print(f"  公開 URL: {config.PUBLIC_SITE_URL}")
+
+    # --- 差分レポート（FR-22 / 要件リスク 7-8）-----------------------------
+    diff = report.build_diff_report(upsert_results, list(unresolved.values()), series["quality"])
+    if diff["value_changes"]:
+        print(f"\n**値が変わった観測 {len(diff['value_changes'])} 件**"
+              "（速報→確報の改定か記事の誤記訂正）")
+        for change in diff["value_changes"][:20]:
+            key = change["natural_key"].replace("\x1f", " / ")
+            print(f"  {key}")
+            print(f"      {change['before']['value']} → {change['after']['value']}")
+    if args.report_json:
+        Path(args.report_json).write_text(
+            json.dumps(diff, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        markdown = Path(args.report_json).with_suffix(".md")
+        markdown.write_text(report.format_diff_report_markdown(diff), encoding="utf-8")
+        print(f"\n差分レポート: {args.report_json}")
+        print(f"  PR 本文向け: {markdown}")
+
+    # --- NFR-05 の CI ガード（--fail-on-unresolved-rate）--------------------
+    threshold = args.fail_on_unresolved_rate
+    if threshold is not None:
+        unresolved_rate = 1.0 - series["quality"]["nfr05"]["rate"]
+        if unresolved_rate > threshold:
+            print(
+                f"\n未解決率 {unresolved_rate:.1%} が閾値 {threshold:.1%} を超えています"
+                "（NFR-05 の CI ガード）",
+                file=sys.stderr,
+            )
+            return EXIT_DATA_ERROR
     return EXIT_OK
 
 
