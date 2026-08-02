@@ -155,6 +155,39 @@ def _range(end_year: int, m1: int, m2: int) -> Period | None:
     )
 
 
+def resolve_with_penalty(window_text: str, pub: date) -> tuple[Period | None, float]:
+    """`resolve()` に confidence の減点を添えて返す（実装設計 §4.5 の期間の行）。
+
+    | 条件 | 減点 |
+    |---|---|
+    | 年が明示されている（P_YM / P_FY_YEAR / P_HALF） | 0.00 |
+    | 年を推定（P_MONTH / P_FY_END）でラグが 1〜2 カ月 | 0.05 |
+    | 同上でラグが範囲外 | 0.25 |
+    | P_RANGE の span が enum 内 | 0.05 |
+
+    どのパターンで解決したかは `Period` の 4 フィールド（§3.2 で固定）からは
+    復元できないため、解決と同時に返す。Period 側にフィールドを足さないための
+    設計（origin.md D-B）。
+    """
+    if P_FY_YEAR.search(window_text) or P_HALF.search(window_text):
+        return resolve(window_text, pub), 0.00
+    if P_RANGE.search(window_text):
+        return resolve(window_text, pub), 0.05
+    m = P_YM.search(window_text)
+    if m:
+        return resolve(window_text, pub), 0.00      # 年が明示されている
+    resolved = resolve(window_text, pub)
+    if resolved is None:
+        return None, 0.00
+    # **発表ラグは「期末」から測る。** §4.4.1 の lag_penalty は月次を想定して
+    # period_start を引数に取るが、決算期（P_FY_END）の period_start は期末の
+    # 約 1 年前であり、そのまま渡すと必ずラグ 13〜14 カ月になって常に 0.25 に
+    # 落ちる。`イオン 決算／2月期`（2026-02 期末）が 2026-04 に掲載されるのは
+    # ラグ 2 カ月であって想定内である。月次は period_start と period_end が
+    # 同月なので、期末基準にしても月次の判定は変わらない。
+    return resolved, lag_penalty(pub, date.fromisoformat(resolved.period_end))
+
+
 def resolve(window_text: str, pub: date) -> Period | None:
     """正規化済み文字列 window_text と掲載日 pub から Period を解決する。
 

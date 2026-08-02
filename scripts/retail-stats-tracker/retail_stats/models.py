@@ -331,8 +331,14 @@ class Observation:
 
     def natural_key(self) -> str:
         """(segment_id, metric_id, scope, period_key, source_authority) を
-        \\x1f 区切りで連結する（実装設計 §5.3）。"""
-        raise NotImplementedError
+        \\x1f 区切りで連結する（実装設計 §5.3）。
+
+        区切りに \\x1f（ASCII Unit Separator）を使うのは、ID 中に現れうる
+        `-` との衝突を避けるため（§4.7 と同じ規約）。
+        """
+        return "\x1f".join((
+            self.segment_id, self.metric_id, self.scope, self.period_key, self.source_authority,
+        ))
 
 
 @dataclass(frozen=True)
