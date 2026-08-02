@@ -84,6 +84,84 @@ class TestGolden60Candidates(unittest.TestCase):
             self.assertTrue(row["features"]["has_authority_marker"])
             self.assertEqual(row["features"]["segment_alias_hits"], [])
 
+    # --- 性質検査（件数だけでは通ってしまう欠陥を止める）---------------------
+    #
+    # 初版は件数しか見ておらず、8 区分中 5 区分が「G1 が定義した性質を持たない行」で
+    # 埋まったまま green だった（retail-stats-qa の差し戻し）。件数は評価データの
+    # 妥当性を何も保証しない。
+
+    def test_multi_authority_rows_come_in_pairs(self):
+        """⑥: 期待値は「2 レコードが共存し、どちらも上書きされない」（制約 14）。
+
+        片側だけを選ぶと、**その期待値を書ける行が 1 件も無くなる**。
+        """
+        rows = [r for r in self.rows if r["bucket"] == "multi_authority"]
+        self.assertEqual(len(rows), 4)
+        groups = {}
+        for row in rows:
+            key = tuple(
+                s for s in row["features"]["segment_alias_hits"] if s != "meti-commerce-dynamics"
+            )[:1]
+            groups.setdefault((key, row["_month_hint"]), []).append(row)
+        self.assertTrue(groups, "ペアの手がかり（業態・月）が失われている")
+        for key, pair in groups.items():
+            with self.subTest(key=key):
+                self.assertEqual(len(pair), 2, "並立ペアの片側しか入っていない")
+                self.assertEqual(
+                    sorted(r["features"]["has_authority_marker"] for r in pair),
+                    [False, True],
+                    "経産省側と協会側が揃っていない",
+                )
+
+    def test_streak_rows_are_evaluable(self):
+        """⑤: 制約 11 の streak_broken_months を評価できる行があること。"""
+        rows = [r for r in self.rows if r["bucket"] == "qualitative_and_streak"]
+        evaluable = [
+            r
+            for r in rows
+            if r["features"]["has_streak"]
+            and r["features"]["segment_alias_hits"]
+            and r["features"]["value_tokens"] > 0
+        ]
+        self.assertGreaterEqual(len(evaluable), 2, "連続記録を評価できる行が無い")
+
+    def test_multi_metric_rows_are_in_scope(self):
+        """②: FR-11 の評価対象は業態が解決できる行に限る。"""
+        for row in [r for r in self.rows if r["bucket"] == "multi_metric"]:
+            with self.subTest(url=row["url"]):
+                self.assertTrue(row["features"]["segment_alias_hits"], "業態が解決できない行")
+                self.assertGreaterEqual(row["features"]["pct_tokens"], 2)
+
+    def test_no_numeric_rows_are_in_scope_and_not_ranking(self):
+        """⑦: 「対象内なのに値が取れない」が期待値の性質。
+
+        ランキング記事は未決事項 (c) に依存するため、決着していない論点を
+        評価データの前提にしない。
+        """
+        for row in [r for r in self.rows if r["bucket"] == "no_numeric"]:
+            with self.subTest(url=row["url"]):
+                self.assertTrue(row["features"]["segment_alias_hits"], "業態が解決できない行")
+                self.assertEqual(row["features"]["value_tokens"], 0)
+                self.assertFalse(row["features"]["is_ranking"], "ランキング記事が混入している")
+
+    def test_period_bucket_covers_all_five_kinds(self):
+        """③: G1 は「期間表記の**全 5 種**」を求めている。"""
+        rows = [r for r in self.rows if r["bucket"] == "period_all_5_types"]
+        self.assertEqual(
+            {r["features"]["period_kind"] for r in rows},
+            {"month", "fiscal_period", "quarter", "half", "fiscal_year"},
+        )
+
+    def test_source_distribution_is_not_dominated_by_one_domain(self):
+        """出所の偏りを止める。G1 は「偏りが評価を無効化する」と言っている。"""
+        import re as _re
+
+        domains = [_re.sub(r"https?://([^/]+)/.*", r"\1", r["url"]) for r in self.rows]
+        top = max(domains.count(d) for d in set(domains))
+        self.assertLess(
+            top / len(domains), 0.60, f"1 ドメインが {top}/{len(domains)} を占めている"
+        )
+
     def test_urls_are_unique(self):
         """同じ記事が複数枠を占めていないこと（代表 variant 単位で選ぶ前提）。"""
         urls = [row["url"] for row in self.rows]
@@ -112,7 +190,7 @@ class TestGolden60Candidates(unittest.TestCase):
 class TestPeriodKind(unittest.TestCase):
     """期間表記の 5 種判定（カタログ §4.2）。パターンの評価順の回帰テスト。"""
 
-    def test_period_patterns_are_ordered_narrowest_first(self):
+    def test_range_periods_are_classified_by_span_not_suffix(self):
         """`1~6月期`（暦年上半期）が決算期に化けないこと。
 
         fiscal_period の `[0-9]{1,2}月期` は `1~6月期` の「6月期」にも一致するため、

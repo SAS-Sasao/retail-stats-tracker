@@ -86,11 +86,10 @@ HEADER = """# golden-60 レビューシート
 本シートは**読むための資料**であり、記入先ではない。各行に候補 JSONL の行番号を
 添えてあるので、確定したらその行の `expected` を埋め `status` を `confirmed` にする。
 
-> **「手がかり」列は機械推定であり誤りを含む。** カタログ別名の単純な部分一致で
-> 出しているだけで、主語位置のガード（設計 §4.3.3）を通していない。実例として
-> `3月消費支出…外食マイナス―総務省` は「外食」の部分一致で `family-restaurant` に
-> ヒットするが、これは総務省の家計調査であって外食業態の統計ではない。
-> **判断は必ずタイトル原文から行い、この列は目印としてのみ使うこと。**
+> **「決めること」列は質問であって答えではない。** 当初は機械推定の業態・指標を
+> 出していたが、それは人手確定へのアンカリングになる（`3月消費支出…外食マイナス―総務省`
+> が「外食」の部分一致で `family-restaurant` にヒットする等、実際に誤りも含んでいた）。
+> **判断は必ずタイトル原文から行うこと。**
 
 ---
 
@@ -143,6 +142,42 @@ HEADER = """# golden-60 レビューシート
 `reason_code` は 7 値: `no_metric_match` / `no_segment_match` / `no_numeric` /
 `ambiguous_period` / `low_confidence` / `llm_schema_error` / `out_of_scope`。
 
+### 記入例（**設計からの転記**であって推奨値ではない）
+
+下の 2 例は実装設計 §7.2 の T-10h / T-10i が期待値を本文で明示しているものを、
+そのまま JSON にしたもの。**書式の見本**として使ってほしい。
+
+`ショッピングセンター／6月既存店売上1.6％減、夏物振わず51カ月ぶりに前年割れ`
+（T-10h: `existing-store-sales-yoy = -1.6` かつ `streak_broken_months = 51`）
+
+```json
+"expected": [
+  {
+    "segment_id": "shopping-center", "metric_id": "existing-store-sales-yoy",
+    "scope": "existing_store", "source_authority": "sc-association",
+    "period_key": "2026-06", "period_type": "month",
+    "value": -1.6, "unit": "percent_yoy",
+    "streak_broken_months": 51, "sign_only": null, "needs_source_check": false
+  }
+]
+```
+
+定性表現のみの行（T-10i: `増収増益` は 2 件、`value = None`、`sign_only = "+"`、
+`needs_source_check = True`）
+
+```json
+"expected": [
+  {"segment_id": "...", "metric_id": "operating-revenue-yoy", "scope": "n_a",
+   "source_authority": "...", "period_key": "...", "period_type": "...",
+   "value": null, "unit": "percent_yoy",
+   "streak_broken_months": null, "sign_only": "+", "needs_source_check": true},
+  {"segment_id": "...", "metric_id": "operating-profit-yoy", "scope": "n_a",
+   "source_authority": "...", "period_key": "...", "period_type": "...",
+   "value": null, "unit": "percent_yoy",
+   "streak_broken_months": null, "sign_only": "+", "needs_source_check": true}
+]
+```
+
 ### 埋めるときの原則（G1 の趣旨）
 
 - **記事タイトルに現れない情報を推測で埋めない。** タイトルから読み取れないものは
@@ -157,27 +192,56 @@ HEADER = """# golden-60 レビューシート
 """
 
 
-def _fmt_features(row: dict, metric_index) -> str:
+def _decisions(row: dict) -> str:
+    """その行で**オーナーが決めること**を列挙する。
+
+    checker から「手がかり列（機械推定の業態・指標）は人手確定へのアンカリングに
+    なる」と指摘を受けたため、**答えの示唆ではなく質問**を出す形に変えた。
+    質問はアンカリングしない。
+    """
     f = row["features"]
-    parts = []
-    segs = f["segment_alias_hits"]
-    parts.append(f"業態={'/'.join(segs) if segs else '**未解決**'}")
-    norm = row["normalized_title"]
-    metrics = sorted({mid for alias, mid in metric_index if alias in norm})
-    parts.append(f"指標={'/'.join(metrics) if metrics else '**未解決**'}")
-    parts.append(f"期間={f['period_kind'] or '**なし**'}")
-    parts.append(f"値={f['value_tokens']}")
+    bucket = row["bucket"]
+    out: list[str] = []
+
+    # --- (B) 解けないことが正解の行 -----------------------------------------
+    if bucket in ("no_numeric", "out_of_scope"):
+        if "真の取りこぼし" in row["selected_because"]:
+            out.append(
+                "**(B)** `no_segment_match`（取りこぼし＝カタログに業態を足すべき）か "
+                "`out_of_scope`（対象外）か ← **G-4 の判断が直接効く**"
+            )
+        elif bucket == "no_numeric":
+            out.append("**(B)** `no_numeric` でよいか（業態は解決できるが値が無い）")
+        else:
+            out.append("**(B)** `out_of_scope` でよいか（個社決算 / 非統計記事）")
+        return "<br>".join(out)
+
+    # --- (A) observation が取れる行 -----------------------------------------
+    if f["pct_tokens"] >= 2:
+        out.append(f"**何レコードに分解するか**（% トークン {f['pct_tokens']} 個。FR-11）")
     if f["has_existing_store"]:
-        parts.append("既存店")
-    if f["has_authority_marker"]:
-        parts.append("**発表主体マーカー**")
-    if f["has_qualitative"]:
-        parts.append("定性")
+        out.append("`scope` = `existing_store`（「既存店」表記あり）でよいか")
+    else:
+        out.append(
+            "**「既存店」表記なし** → 既存店指標に**昇格させない**。"
+            "率なら `all-store-sales-yoy` / 絶対額なら `sales-amount-absolute`（カタログ §2.2）"
+        )
+    if bucket == "multi_authority":
+        out.append(
+            "`source_authority`（経産省側 = `meti` / 協会側 = カタログ既定）。"
+            "**相方と natural key が衝突せず 2 レコード共存すること**"
+        )
+    if f["period_kind"] == "month":
+        out.append("`period_key`: タイトルに年が無ければ**掲載月の前月**（カタログ §4.2）")
+    elif f["period_kind"]:
+        out.append(f"`period_key` / `period_type`（{f['period_kind']}）")
+    else:
+        out.append("**期間が読み取れない** → `ambiguous_period` で (B) にするかを含めて判断")
     if f["has_streak"]:
-        parts.append("連続記録")
-    if f["has_fullwidth_pct"]:
-        parts.append("全角％")
-    return " / ".join(parts)
+        out.append("`streak_broken_months` も入れる（**値と両方**。制約 11）")
+    if f["has_qualitative"] and f["value_tokens"] == 0:
+        out.append("`value = null` / `sign_only` / `needs_source_check = true`")
+    return "<br>".join(out)
 
 
 def main() -> int:
@@ -196,21 +260,35 @@ def main() -> int:
         return 3
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     cat = catalog_mod.load(config.catalog_path(args.org))
-    metric_index = cat.metric_alias_index()
 
-    out = [HEADER]
+    forms_b = [r for r in rows if r["bucket"] in ("no_numeric", "out_of_scope")]
+    forms_a = [r for r in rows if r not in forms_b]
+    multi = [r for r in forms_a if r["features"]["pct_tokens"] >= 2]
+    existing = [r for r in forms_a if r["features"]["has_existing_store"]]
+    summary = [
+        "\n## 作業量の目安\n",
+        f"- **(A) observation を書く行: {len(forms_a)} 件** "
+        f"（うち複数レコードに分解しうる行 {len(multi)} 件、「既存店」表記あり {len(existing)} 件）",
+        f"- **(B) `reason_code` を選ぶだけの行: {len(forms_b)} 件**",
+        "",
+        "(B) は 1 行あたり選択肢 7 値から 1 つ選ぶだけなので速い。時間がかかるのは (A) の"
+        f"うち複数指標に分解する {len(multi)} 件で、ここが FR-11 の評価そのものになる。",
+        "",
+        "---",
+    ]
+    out = [HEADER, "\n".join(summary)]
     for bucket, title in BUCKET_TITLES.items():
         picked = [(i + 1, r) for i, r in enumerate(rows) if r["bucket"] == bucket]
         out.append(f"\n## {title}\n")
         out.append(f"{BUCKET_NOTES[bucket]}\n")
-        out.append("| 行 | 掲載日 | 記事タイトル | 手がかり（※機械推定・誤りうる） |")
+        out.append("| 行 | 掲載日 | 記事タイトル | **決めること** |")
         out.append("|---:|---|---|---|")
         for lineno, row in picked:
             title_cell = row["title"].replace("|", "\\|")
             dates = row["appeared_dates"]
             date_cell = dates[0] if len(dates) == 1 else f"{dates[0]} (+{len(dates) - 1})"
             out.append(
-                f"| {lineno} | {date_cell} | {title_cell} | {_fmt_features(row, metric_index)} |"
+                f"| {lineno} | {date_cell} | {title_cell} | {_decisions(row)} |"
             )
         # 補充枠がある区分は内訳を出す
         reasons = {r["selected_because"] for _, r in picked}

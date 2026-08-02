@@ -161,6 +161,23 @@ RETAIL_STATS_WORKSPACE=/path/to/cc-sier-organization \
 | (b) golden-60 の期待値が人手で確定し、末尾 3 区分 14 件を含む | **未着手・本リポジトリでは不可能**。`.companies/{org}/docs/daily-digest/` の実データ（102 ファイル / 595 行）が必要。cc-sier 側、または `RETAIL_STATS_WORKSPACE` で作業コピーを指した状態で行う |
 | (c) ダイジェストへの書き込みが実際に拒否されることを確認 | **hook 単体では確認済み**（`agent_type=retail-stats-qa` + `$RS_DIGEST_DIR` 配下のパスで `permissionDecision: "deny"` を返すことを検証）。ただし `$RS_DIGEST_DIR` が実在する状態での end-to-end 確認は cc-sier 側で行う必要がある |
 
+### D-F. 作業事故の記録（2026-08-02）
+
+**golden-60 の修正が commit に入らないまま「修正済み」として main にマージされた。**
+
+- 原因: ⑧ の回帰テストで仕込んだ改変を戻すのに `git checkout -- scripts/retail-stats-tracker/`
+  を使い、**同じ配下にあった再生成済みの候補ファイルと、追加したばかりの性質検査ごと
+  巻き戻した**。その後の commit は残った差分（origin.md / レビュー生成器）だけを拾った
+- **検知できなかった理由**: 性質検査も一緒に消えたため、テストは緑のまま通った。
+  「検査と検査対象が同時に消えると、消えたこと自体が観測できない」という、
+  §1.2 の silent accumulation と同型の事故
+- 再発防止:
+  1. 回帰テストで改変を仕込むときは、**パス指定を仕込んだファイルだけに限定する**
+     （`git checkout -- <その 1 ファイル>`。ディレクトリ単位で戻さない）
+  2. commit の直前に `git diff --stat HEAD` で**意図した全ファイルが入っているか**を確認する
+  3. 性質検査は「検査対象と同じ変更で消せる」場所に置かない — 今回は同一ディレクトリ配下
+     だったため同時に失われた。テストと fixture の同時消失を検出する手段が要る（未対応）
+
 ### D-E. ネクストアクション（2026-08-02 時点）
 
 **完了**: M1（`config` / `textnorm` / `digest` / `cli --dry-run`）/ M2（カタログローダ）/
