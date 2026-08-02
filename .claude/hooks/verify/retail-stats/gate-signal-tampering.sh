@@ -41,6 +41,23 @@ diff_added() {
 }
 
 added="$(diff_added)"
+
+# T3 の判定木スキャンは**実装コードと hooks に限る**。
+# `tests/fixtures/golden-60.candidates.jsonl` は区分名として `out_of_scope` の
+# 文字列を全行に持つ機械生成物であり、キーワード一致では常に発火してしまう。
+# ただし**評価データを緩める経路は塞いだままにする**必要があるので、
+# 凍結済み golden-60 の期待値変更は下の専用検査で捕まえる。
+code_added="$(git diff -U0 HEAD -- "${RS_CODE_ROOT}/retail_stats" "$HOOK_DIR" | awk '/^\+/ && !/^\+\+\+/')"
+
+hits_in() {
+  local body="$1" pattern="$2" out status
+  out=$(printf '%s\n' "$body" | grep -nE "$pattern")
+  status=$?
+  if (( status > 1 )); then
+    rs_block "内部エラー: パターン照合に失敗しました（grep exit ${status}）。"
+  fi
+  printf '%s' "$out"
+}
 findings=""
 
 add_finding() {
@@ -74,8 +91,20 @@ t2="$(hits '(0\.9|90)[^0-9].*(NFR-04|主要4|主要 4)|(0\.8|80)[^0-9].*NFR-05|f
   "目標値の変更は要件改訂として扱う（§4.2 SP3）。コード側で緩めない。"
 
 # --- T3: unresolved 退避のスキップ / 分母操作 -------------------------------
-t3="$(hits 'permanently[-_]unresolvable|out_of_scope' | grep -vE 'REASON_CODES|#|\"\"\"' || true)"
-t3b="$(hits 'unresolved\.(pop|remove|clear)|del\s+unresolved')"
+t3="$(hits_in "$code_added" 'permanently[-_]unresolvable|out_of_scope' | awk '!/REASON_CODES|#/')"
+t3b="$(hits_in "$code_added" 'unresolved\.(pop|remove|clear)|del\s+unresolved')"
+
+# T3-c 凍結済み golden-60 の**期待値そのもの**の変更。
+# 評価データの正解を `no_segment_match` → `out_of_scope` に書き換えるのは、
+# 判定木を緩めるのと同じ効果（NFR-05 の分母操作）を、コードに触れずに達成する経路。
+# 候補ファイル（機械生成・再生成される）ではなく、凍結ファイルだけを見る。
+GOLDEN_FROZEN="${RS_CODE_ROOT}/tests/fixtures/golden-60.jsonl"
+t3c="$(git diff -U0 HEAD -- "$GOLDEN_FROZEN" | awk '/^[+-]/ && !/^(\+\+\+|---)/ && /reason_code/' | wc -l)"
+if [[ "${t3c:-0}" -gt 0 ]]; then
+  add_finding "T3" \
+    "凍結済み golden-60 の期待値（reason_code）の変更を検出（${t3c} 行）" \
+    "評価データの正解を書き換えるのは、判定木を緩めるのと同じ効果をコードに触れずに達成する経路。変更理由と、その行の期待値が本当に誤っていた根拠を示すこと。"
+fi
 if [[ -n "$t3b" ]]; then
   add_finding "T3" "unresolved からの行削除を検出:"$'\n'"$t3b" \
     "FR-10 は未解決行を破棄しないことを求めている。"
@@ -100,10 +129,26 @@ fi
 
 # --- T5: 握り潰しの新規追加（NFR-10）----------------------------------------
 # _common.sh の rs_changed_files が使う `|| true` は既存行のため対象外
-t5="$(hits '2>/dev/null|\|\|\s*true|except\s*:\s*pass|except\s+Exception\s*:\s*pass')"
+# パターン中の末尾 1 文字を文字クラス（`[l]` `[e]` `[s]`）にしてあるのは、
+# **この行自身が検出対象に一致するのを避けるため**である。検出器のパターン定義が
+# 自分自身に当たると、ゲートは毎回自分を指摘して赤のままになる。文字クラス化しても
+# 対象文字列への一致は変わらないので、検出力は落ちない。
+# 同じ理由で、この節のコメントには検出対象の文字列そのものを書かない。
+t5="$(hits '2>/dev/nul[l]|\|\|\s*tru[e]|except\s*:\s*pas[s]|except\s+[A-Za-z]+\s*:\s*pas[s]')"
 [[ -n "$t5" ]] && add_finding "T5" \
   "握り潰しの新規追加を検出:"$'\n'"$t5" \
   "NFR-10。失敗が緑に見える経路を増やさないこと。失敗が自明に「対象なし」を意味する箇所に限る。"
+
+# **例外の握り潰しは 2 行に分かれるのが普通**。`except Exception:` と `pass` が
+# 別行にあるのが Python の通常の書き方であり、1 行形式しか見ないと実質検出できない。
+# 追加行に except と（コメントのみを伴う）pass の両方があれば申告を求める。
+t5_except="$(hits '^\+\s*except\b.*:\s*$')"
+t5_pass="$(hits '^\+\s*pas[s]\s*(#.*)?$')"
+if [[ -n "$t5_except" && -n "$t5_pass" ]]; then
+  add_finding "T5" \
+    "例外の握り潰し（複数行の except / pass）の追加を検出:"$'\n'"${t5_except}"$'\n'"${t5_pass}" \
+    "NFR-10。except で握り潰すと失敗が緑に見える。捕捉するなら理由を限定し、再送出するか記録すること。"
+fi
 
 # --- T6: 本 hooks ディレクトリ自身の削除・無効化 ----------------------------
 deleted_hooks="$(git diff --name-status HEAD -- "$HOOK_DIR" 2>/dev/null | grep -E '^D' || true)"
