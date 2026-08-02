@@ -89,7 +89,7 @@ gh api "repos/SAS-Sasao/cc-sier-organization/contents/<原本パス>" --jq '.con
 | カタログ | ① `{workspace}/.companies/{org}/docs/retail-domain/retail-monthly-kpi-catalog.md` → ② `{repo_root}/docs/design/retail-monthly-kpi-catalog.md` |
 | ダイジェスト | `{workspace}/.companies/{org}/docs/daily-digest/`（フォールバックなし） |
 | データ出力 | `{workspace}/.companies/{org}/docs/retail-stats/data/`（フォールバックなし。書き込み先を曖昧にしない） |
-| 配信 HTML | `{repo_root}/docs/retail-stats/index.html`（org 非依存。workspace 差し替えの対象外） |
+| 配信 HTML | `{workspace}/docs/retail-stats/index.html`（org 非依存だが**配信先リポに追随**。D-G で変更） |
 | テスト | 常に `tests/fixtures/` を直接指す。実データの所在に依存しない |
 
 `workspace` は `RETAIL_STATS_WORKSPACE` が設定されていればその値、未設定なら
@@ -104,6 +104,39 @@ RETAIL_STATS_WORKSPACE=/path/to/cc-sier-organization \
 ただし実装設計 §2.5 の引数表に「パスではなく組織スラグである」ことと、
 データ層の所在は環境変数で差し替える旨を注記できると、同じ検討を
 繰り返さずに済む。
+
+### D-G. 配信先の確定（2026-08-02 決定）
+
+**採用: cc-sier-organization の GitHub Pages で配信する（要件 IF-05 の想定どおり）。**
+
+```
+公開 URL: https://sas-sasao.github.io/cc-sier-organization/retail-stats/
+出力先  : {workspace}/docs/retail-stats/index.html
+```
+
+| 選択肢 | 採否 | 理由 |
+|---|---|---|
+| **cc-sier-organization の Pages** | **採用** | 要件 IF-05 が「`docs/index.html` からのリンクを追加する」と定めており、その `docs/index.html`（組織ポータルのカードグリッド）は cc-sier 側にしか無い。Pages も既に稼働中（`main` ブランチ `/docs`、status=built）で新規設定が不要 |
+| 本リポジトリで Pages を有効化 | 不採用 | 実装と配信が同じリポで完結する利点はあるが、`docs/index.html`（リンク元）を新設することになり IF-05 の「既存ポータルからリンクする」という配置意図から外れる。ダイジェスト・ダッシュボードと並ぶ導線に置けない |
+
+**実装への影響**: `config.html_output_path()` を**ワークスペースルート追随**に変更した。
+D-A では「配信 HTML は `{repo_root}/docs/…`（workspace 差し替えの対象外）」としていたが、
+配信するリポジトリが cc-sier である以上、`RETAIL_STATS_WORKSPACE` で cc-sier の作業コピーを
+指した状態で build したときに**そちらの `docs/` に出力されなければ Pages に載らない**。
+未設定時は本リポジトリの `docs/` に出るので、`file://` でのローカルプレビュー
+（NFR-08 の自己完結性の確認）としてそのまま機能する。
+
+**公開の可否**: オーナー承認済み（2026-08-02）。cc-sier は既に PUBLIC で Pages 稼働中のため、
+新たに公開範囲が広がる操作は発生しない。掲載内容は公開記事の見出し・URL と統計値のみで
+個人情報を含まない（NFR-15）。
+
+**残作業（M6 / M7）**:
+
+1. M6 で `docs/retail-stats/index.html` を生成する（自己完結・2 MB 以内）
+2. M7 で cc-sier の `docs/index.html` にカードを 1 枚追加する（既存は
+   ダッシュボード / 日次ダイジェスト / AWS 構成図 / draw.io / ナレッジポータル /
+   TodoInsights の 7 枚。同じ `<a class="card">` 形式で並べる）
+3. 生成物を cc-sier 側へ反映する経路（PR）は CI/CD 設計 §「Stage 1」の担当
 
 ### D-B. 設計書に無い実装上の判断
 
@@ -354,6 +387,17 @@ G-1 = 母集団を広げない**（いずれも下記の推奨どおり）。
 **既知の限界**: ⑧ の T1〜T5 は `git diff -U0 HEAD` を見るため、**未コミットの新規ファイル
 （untracked）は走査対象外**である。設計 §2.3 ⑧ の手順 2 がそう定めているためそのままに
 したが、新規に追加した hook や実装ファイルは commit 後に初めて検査対象になる。
+
+#### N-3f. 配信（D-G で決定済み。M6 / M7 の作業）
+
+| # | 内容 | 段階 |
+|---|---|---|
+| N-3f-1 | M6 で `docs/retail-stats/index.html` を生成（自己完結・2 MB 以内・`file://` で全機能） | M6 |
+| N-3f-2 | cc-sier の `docs/index.html` に retail-stats のカードを 1 枚追加（既存 7 枚と同じ `<a class="card">` 形式） | M7 |
+| N-3f-3 | 生成物を cc-sier へ反映する PR 経路 | CI/CD 設計 Stage 1 |
+
+公開 URL は `https://sas-sasao.github.io/cc-sier-organization/retail-stats/`。
+cc-sier の Pages は `main` ブランチ `/docs` を配信しており設定変更は不要。
 
 #### N-4. オーナー判断待ち（実装では解決できない）
 

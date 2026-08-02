@@ -9,7 +9,7 @@
     データ:    {workspace}/.companies/{org}/docs/retail-stats/data/
     カタログ:  {workspace}/.companies/{org}/docs/retail-domain/retail-monthly-kpi-catalog.md
     ダイジェスト: {workspace}/.companies/{org}/docs/daily-digest/
-    配信 HTML: {repo_root}/docs/retail-stats/index.html（org 非依存）
+    配信 HTML: {workspace}/docs/retail-stats/index.html（org 非依存。配信先リポに追随）
 
 ## 本リポジトリ単体で動かすための入力所在ポリシー（origin.md「入力データの所在」）
 
@@ -52,8 +52,13 @@ DATA_RELPATH = "docs/retail-stats/data"
 # 正準パスが存在しないときのフォールバック先。
 CATALOG_SNAPSHOT_RELPATH = "docs/design/retail-monthly-kpi-catalog.md"
 
-# 配信 HTML（IF-05、org 非依存。リポジトリルート起点）
+# 配信 HTML（IF-05、org 非依存。**ワークスペースルート起点**）。
+# 配信は cc-sier-organization の GitHub Pages で行う（origin.md D-G）。
 HTML_RELPATH = "docs/retail-stats/index.html"
+
+# 公開 URL。cc-sier の Pages 設定は main ブランチ `/docs` なので、
+# `docs/retail-stats/index.html` は下記で配信される。
+PUBLIC_SITE_URL = "https://sas-sasao.github.io/cc-sier-organization/retail-stats/"
 
 # 決定論パースの確信度しきい値（実装設計 §4.3.7 / FR-07 既定 0.70）
 CONFIDENCE_THRESHOLD = 0.70
@@ -165,11 +170,18 @@ def digest_dir(org: str = DEFAULT_ORG, repo_root: Path | None = None) -> Path:
 def html_output_path(repo_root: Path | None = None) -> Path:
     """`docs/retail-stats/index.html`（IF-05、org 非依存）を返す。
 
-    配信物はリポジトリの成果物であり、`.companies/` のデータ層とは別の
-    ライフサイクルを持つため workspace 差し替えの対象にしない。
+    **配信するリポジトリ（= ワークスペースルート）に追随する。**
+    配信は cc-sier-organization の GitHub Pages（`main` ブランチ `/docs`、
+    `https://sas-sasao.github.io/cc-sier-organization/`）で行うと決めたため
+    （origin.md D-G）、`RETAIL_STATS_WORKSPACE` で cc-sier の作業コピーを
+    指しているときは**そちらの `docs/` に書き出す**必要がある。
+
+    未設定ならリポジトリルート = 本リポジトリの `docs/` になり、
+    ローカルプレビュー（`file://` で開く。NFR-08）として機能する。
+
+    org 非依存である点は変わらない（`.companies/{org}/` の下ではない）。
     """
-    root = repo_root if repo_root is not None else find_repo_root()
-    return root / HTML_RELPATH
+    return workspace_root(repo_root) / HTML_RELPATH
 
 
 def resolved_inputs(org: str = DEFAULT_ORG, repo_root: Path | None = None) -> dict[str, str]:
@@ -195,4 +207,5 @@ def resolved_inputs(org: str = DEFAULT_ORG, repo_root: Path | None = None) -> di
         "digest_dir_exists": str(digests.is_dir()),
         "data_dir": str(data),
         "html_output_path": str(html_output_path(root)),
+        "html_public_url": PUBLIC_SITE_URL,
     }
