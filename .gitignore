@@ -21,3 +21,8 @@ Thumbs.db
 # ここでは除外しない）
 /tmp/
 *.tmp
+
+# 検証 hooks（B 系統）の実行時状態。loop-engineering-design.md §2.2 の
+# RS_STATE_DIR。Stop の再入ガードのセッション別カウンタと unresolved-stops.log
+# であり、成果物ではない。commit すると session_id が履歴に残り続ける。
+.companies/*/.retail-stats-verify/
