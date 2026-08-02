@@ -6,7 +6,10 @@
 
 ## 状態
 
-**M1 / M2 完了、golden-60 凍結済み。次は M3（決定論パース）。**
+**M1 / M2 / M3 完了、golden-60 凍結済み。次は M4（永続化）→ M6（HTML 生成）。**
+
+M3 の計測結果: NFR-04 = 100%（達成）/ NFR-05 = 68.4%（未達、目標 80%）。
+未達の 17 行はいずれも実装のバグではなくカタログ・設計側の論点。
 進捗と再開点は `docs/design/origin.md` の D-E を参照。設計は
 [cc-sier-organization](https://github.com/SAS-Sasao/cc-sier-organization)
 リポジトリの組織「domain-tech-collection」で策定された。
