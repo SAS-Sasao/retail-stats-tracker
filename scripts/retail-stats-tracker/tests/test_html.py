@@ -69,6 +69,17 @@ class TestSelfContained(unittest.TestCase):
         """
         self.assertIn("https://www.ryutsuu.biz/sales/s072477.html", self.html)
 
+    def test_portal_back_link_is_relative(self):
+        """組織ポータルへ戻る導線（相対パス）。
+
+        `../` にしてあるのは、公開時（docs/retail-stats/ 配下）に
+        組織ポータルへ解決し、docs/ ツリーごとローカルに置いた場合も
+        file:// で同じく動くため。絶対 URL だとオフライン確認で外部へ飛ぶ。
+        """
+        self.assertIn('<a href="../">', self.html)
+        self.assertIn("ポータルへ戻る", self.html)
+        self.assertNotIn('href="https://sas-sasao.github.io', self.html)
+
     def test_check_rejects_a_dynamic_fetch(self):
         with self.assertRaises(build.SelfContainedError):
             build.check_self_contained('<script>fetch("/x")</script>')

@@ -8,6 +8,11 @@
 </head>
 <body>
 <header>
+  <!-- 組織ポータルへ戻る導線。**相対パス**にしてあるのは、公開時
+       （docs/retail-stats/ 配下）に ../ が組織ポータルへ解決し、かつ
+       docs/ ツリーごとローカルに置いた場合も file:// で同じく動くため。
+       絶対 URL にするとオフラインのローカル確認で外部へ飛んでしまう。 -->
+  <p class="backlink"><a href="../">← cc-sier-organization ポータルへ戻る</a></p>
   <h1>小売月次統計トラッカー</h1>
   <p class="meta" id="meta"></p>
 </header>
