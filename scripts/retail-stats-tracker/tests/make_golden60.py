@@ -66,37 +66,68 @@ _STREAK_RE = re.compile(r"[0-9]+カ月ぶり")
 _VALUE_TOKEN_RE = re.compile(r"[0-9]+(?:\.[0-9]+)?%|[0-9]+(?:\.[0-9]+)?(?:兆|億|万)?円")
 
 # 期間表記の 5 種（カタログ §4.2）。normalize 後の文字列に当てる。
-# G1 が要求する 5 種は カタログ §4.2 の行にそのまま対応する。
 #   月次   = 「6月」「2026年6月度」
-#   決算期 = 「◯◯年◯月期」（決算期末月。会計年度の別の名付け方）
-#   四半期 = 「3〜5月」
-#   半期   = 「1〜6月期」
-#   年度   = 「2025年度」
+#   決算期 = 「◯◯年◯月期」（決算期末月）
+#   四半期 = 「3〜5月」「第1四半期」（**幅 3 か月**）
+#   半期   = 「1〜6月期」「上期」「中間」（**幅 6 か月**）
+#   年度   = 「2025年度」「通期」
 #
-# **順序が意味を持つ。狭いパターンから先に置くこと。**
-# `1~6月期`（半期）は fiscal_period の `[0-9]{1,2}月期` にも quarter の
-# `[0-9]{1,2}~[0-9]{1,2}月` にも一致する。half を先頭に置かないと半期が
-# 1 件も選ばれず、G1 の「全 5 種」を満たせなくなる。
-PERIOD_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("half", re.compile(r"[0-9]{1,2}~[0-9]{1,2}月期")),
-    ("fiscal_period", re.compile(r"(?:[0-9]{2,4}年)?[0-9]{1,2}月期")),
-    ("fiscal_year", re.compile(r"[0-9]{2,4}年度")),
-    ("quarter", re.compile(r"[0-9]{1,2}~[0-9]{1,2}月")),
-    ("month", re.compile(r"(?:[0-9]{4}年)?[0-9]{1,2}月")),
-)
-PERIOD_KINDS = tuple(name for name, _ in PERIOD_PATTERNS)
+# **`N~M月` 系は「期」の有無ではなく幅で分ける。** 当初 half を
+# `[0-9]{1,2}~[0-9]{1,2}月期` としていたが、これは `1~3月期`（第1四半期）にも
+# 一致する。実測では half 判定 7 件のうち実際に半期だったのは 1 件だけで、
+# G1 の「全 5 種」が名目だけになっていた。カタログ §4.2 が half の例に挙げるのは
+# `1〜6月期` であり、区別しているのは**期間の幅**である。
+_RANGE_RE = re.compile(r"(?P<a>[0-9]{1,2})~(?P<b>[0-9]{1,2})月")
+_QUARTER_WORD_RE = re.compile(r"第[1-4]四半期|[1-4]Q")
+_HALF_WORD_RE = re.compile(r"上期|下期|上半期|下半期|中間期?")
+_FISCAL_YEAR_RE = re.compile(r"[0-9]{2,4}年度|通期")
+_FISCAL_PERIOD_RE = re.compile(r"(?:[0-9]{2,4}年)?[0-9]{1,2}月期")
+_MONTH_RE = re.compile(r"(?:[0-9]{4}年)?[0-9]{1,2}月")
+
+PERIOD_KINDS = ("month", "fiscal_period", "quarter", "half", "fiscal_year")
+
+# 月次統計記事らしさ / ランキング記事（未決事項 (c) の対象）
+_STATISTICS_RE = re.compile(r"統計|月次|月度|既存店|販売額|売上|客数|客単価|供給高|物価|市場規模")
+_RANKING_RE = re.compile(r"ランキング|週刊")
+
+
+def _span_months(a: int, b: int) -> int:
+    """開始月 a から終了月 b までの月数（年またぎを許容）。9~2月 → 6。"""
+    return (b - a) % 12 + 1
+
+
+def period_kind(norm: str) -> str | None:
+    """期間表記を カタログ §4.2 の 5 種に分類する。判定できなければ None。"""
+    if _HALF_WORD_RE.search(norm):
+        return "half"
+    if _QUARTER_WORD_RE.search(norm):
+        return "quarter"
+    m = _RANGE_RE.search(norm)
+    if m:
+        span = _span_months(int(m.group("a")), int(m.group("b")))
+        if span == 3:
+            return "quarter"
+        if span == 6:
+            return "half"
+        return None          # 9 か月累計など。5 種のいずれでもない
+    if _FISCAL_YEAR_RE.search(norm):
+        return "fiscal_year"
+    if _FISCAL_PERIOD_RE.search(norm):
+        return "fiscal_period"
+    if _MONTH_RE.search(norm):
+        return "month"
+    return None
+
+
+def month_hint(norm: str) -> str | None:
+    """対象月の手がかり（発表主体の並立ペアを組むためのグルーピングキー）。"""
+    m = re.search(r"(?<![0-9~])([0-9]{1,2})月(?!期)", norm)
+    return m.group(1) if m else None
 
 
 def representative(titles: list[str]) -> str:
     """§4.7 の代表 variant 選択（数値トークン数 → 長さ → 辞書順）。走査順に依存しない。"""
     return max(titles, key=lambda t: (len(_NUM_RE.findall(textnorm.normalize(t))), len(t), t))
-
-
-def period_kind(norm: str) -> str | None:
-    for name, pattern in PERIOD_PATTERNS:
-        if pattern.search(norm):
-            return name
-    return None
 
 
 def classify(raw: str, norm: str, cat) -> dict:
@@ -118,6 +149,8 @@ def classify(raw: str, norm: str, cat) -> dict:
         "has_qualitative": bool(_QUALITATIVE_RE.search(norm)),
         "has_streak": bool(_STREAK_RE.search(norm)),
         "period_kind": period_kind(norm),
+        "is_statistics_like": bool(_STATISTICS_RE.search(norm)),
+        "is_ranking": bool(_RANKING_RE.search(norm)),
         # --- ここから下は原文で見る ---
         "has_fullwidth_pct": "％" in raw,
         "has_halfwidth_pct": "%" in raw,
@@ -126,16 +159,84 @@ def classify(raw: str, norm: str, cat) -> dict:
     }
 
 
-def pick(candidates: list[dict], predicate, count: int, bucket: str, why: str, taken: set) -> list[dict]:
-    """条件に合う候補から count 件を決定論的に選ぶ（URL 昇順。乱数を使わない）。"""
-    chosen = []
+def _sort_key(item: dict) -> tuple:
+    """**ドメインで層化してから** URL 昇順。
+
+    素の URL 昇順はドメインのアルファベット順と一致するため（`https://d…` <
+    `https://n…` < `https://www.ryutsuu…`）、候補が豊富な区分ほど 1 ドメインに
+    偏る。実測では diamond-rm.net が母集団 17.5% に対し選定 46.7% を占め、
+    協会統計・経産省統計のほぼ全てを供給する流通ニュースが 57.6% → 33.3% に
+    沈んでいた。各ドメイン内の順位を第 1 キーにすると、決定論を保ったまま
+    ドメインを巡回する。
+    """
+    return (item["_domain_rank"], item["_domain"], item["url"])
+
+
+def annotate_ranks(candidates: list[dict]) -> None:
+    """各候補に、同一ドメイン内での順位を付ける（層化サンプリングのため）。"""
+    by_domain: dict[str, int] = {}
     for item in sorted(candidates, key=lambda c: c["url"]):
+        domain = re.sub(r"https?://([^/]+)/.*", r"\1", item["url"])
+        item["_domain"] = domain
+        item["_domain_rank"] = by_domain.get(domain, 0)
+        by_domain[domain] = item["_domain_rank"] + 1
+
+
+def pick(candidates: list[dict], predicate, count: int, bucket: str, why: str, taken: set) -> list[dict]:
+    """条件に合う候補から count 件を決定論的に選ぶ（ドメイン層化。乱数を使わない）。"""
+    chosen = []
+    for item in sorted(candidates, key=_sort_key):
         if len(chosen) >= count:
             break
         if item["url"] in taken or not predicate(item):
             continue
         taken.add(item["url"])
         chosen.append({**item, "bucket": bucket, "selected_because": why})
+    return chosen
+
+
+def pick_authority_pairs(candidates: list[dict], count: int, taken: set) -> list[dict]:
+    """**発表主体が並立するペアを両側そろえて**選ぶ（G1 区分⑥ / 制約 14）。
+
+    期待値は「2 レコードが共存し、どちらも上書きされない」なので、片側だけを
+    選ぶと**その期待値を書ける行が 1 件も無くなる**（初版がこの状態だった）。
+    同一業態・同一月について「発表主体マーカーを持つ行（= 経産省側）」と
+    「持たない行（= 協会側）」がそろう組を探し、両方を同時に採る。
+    """
+    groups: dict[tuple, dict[str, list]] = {}
+    for item in sorted(candidates, key=_sort_key):
+        if item["url"] in taken:
+            continue
+        f = item["features"]
+        segs = [s for s in f["segment_alias_hits"] if s != "meti-commerce-dynamics"]
+        month = item["_month_hint"]
+        if not segs or not month:
+            continue
+        groups.setdefault((segs[0], month), {}).setdefault(
+            "meti" if f["has_authority_marker"] else "association", []
+        ).append(item)
+
+    chosen = []
+    for key in sorted(groups):
+        if len(chosen) >= count:
+            break
+        sides = groups[key]
+        if "meti" not in sides or "association" not in sides:
+            continue
+        pair = [sides["meti"][0], sides["association"][0]]
+        if any(x["url"] in taken for x in pair):
+            continue
+        for item in pair:
+            taken.add(item["url"])
+            chosen.append({
+                **item,
+                "bucket": "multi_authority",
+                "selected_because": (
+                    f"発表主体の並立ペア（segment={key[0]} / {key[1]}月）の"
+                    + ("経産省側" if item["features"]["has_authority_marker"] else "協会側")
+                    + "。**相方と 2 レコードが共存するのが期待値**（制約 14）"
+                ),
+            })
     return chosen
 
 
@@ -183,6 +284,7 @@ def main() -> int:
                 "source_name": group[0].source_name,
                 "first_digest_date": min(r.digest_date for r in group),
                 "appeared_dates": sorted({r.digest_date for r in group}),
+                "_month_hint": month_hint(norm),
                 "features": classify(title, norm, cat),
                 "expected": None,
                 "status": "needs_human_review",
@@ -191,54 +293,101 @@ def main() -> int:
 
     print(f"母集団: {len(files)} ファイル / 延べ {len(rows)} 行 / 一意 URL {len(candidates)} 件")
 
+    annotate_ranks(candidates)
     taken: set = set()
     selected: list[dict] = []
 
     def f(item):
         return item["features"]
 
+    def in_scope(item):
+        """カタログの業態別名で解決できる = 本システムの対象内。"""
+        return bool(f(item)["segment_alias_hits"])
+
     # **希少な区分から先に取る。** pick() は taken 集合で URL の重複選択を防ぐため、
-    # 先に走った区分が後続の区分の唯一の候補を奪いうる。実例: 真の取りこぼし候補
-    # `6月都内物価…8カ月ぶり伸び拡大―総務省` は `Nカ月ぶり` を含むため
-    # qualitative_and_streak にも一致し、そちらを先に走らせると out_of_scope の
-    # 「2 件は真の取りこぼしを混ぜる」という G1 の構成要求が満たせなくなる
-    # （候補は実データに 3 件しか無い）。区分の希少度の昇順に並べること。
+    # 先に走った区分が後続の区分の唯一の候補を奪う。順序は宣言ではなく
+    # **実データの候補件数**で決めること（初版はこの順序が守られておらず、
+    # no_numeric と multi_authority が代表例を他区分に奪われていた）。
+
+    # ⑧-a 真の取りこぼし（母集団 3 件。最も希少）
     selected += pick(
         candidates,
-        lambda c: not f(c)["segment_alias_hits"] and f(c)["has_authority_marker"],
+        lambda c: not in_scope(c) and f(c)["has_authority_marker"],
         2, "out_of_scope",
         "発表主体マーカーはあるが業態を解決できない = **真の取りこぼし候補**"
         "（期待値は no_segment_match。out_of_scope との判別を評価するため意図的に混ぜる）",
         taken,
     )
+
+    # ⑥ 発表主体の並立ペア（両側そろえて 4 件 = 2 組）
+    selected += pick_authority_pairs(candidates, 4, taken)
+
+    # ⑦ 対象内なのに値が取れない行。**ランキング記事は除く**
+    #    G1 の代表例 `ホームセンター月次実績＝2026年6月度` がこの性質そのもの。
+    #    ランキング記事は未決事項 (c)（分母除外の可否）に依存するため、
+    #    決着していない論点を評価データの前提にしない。
+    selected += pick(
+        candidates,
+        lambda c: f(c)["value_tokens"] == 0
+        and in_scope(c)
+        and f(c)["is_statistics_like"]
+        and not f(c)["is_ranking"],
+        4, "no_numeric",
+        "対象内の月次統計記事だが値トークン（% / 金額）が 0"
+        "（期待値は unresolved / no_numeric。out_of_scope との違いは対象内である点）",
+        taken,
+    )
+
+    # ⑤-a 連続記録（streak_broken_months を評価できる行。**対象内 × 値あり**）
+    selected += pick(
+        candidates,
+        lambda c: f(c)["has_streak"] and in_scope(c) and f(c)["value_tokens"] > 0,
+        3, "qualitative_and_streak",
+        "連続記録表現 + 値あり + 対象内（期待値は value と streak_broken_months の**両方**）",
+        taken,
+    )
+
+    # ① 主要4業態 × 既存店（G1 の厳密条件）
     selected += pick(
         candidates,
         lambda c: bool(set(f(c)["segment_alias_hits"]) & set(MAJOR4)) and f(c)["has_existing_store"],
         18, "major4_existing_store", "主要4業態の別名に一致 かつ 「既存店」を含む（G1 の厳密条件）", taken,
     )
-    # G1 は 18 件を求めるが、厳密条件（主要4業態 × 既存店）に一致する一意 URL は
-    # 実データに 12 件しか存在しない（--until 2026-07-26 時点）。不足分は
-    # 「主要4業態の月次指標（既存店表記なし）」で補い、どちらで選ばれたかを
-    # selected_because に必ず残す。黙って 12 件で打ち切ると、golden-60 が
-    # NFR-04（主要4業態 90%）の評価に足りていないことが誰にも見えなくなる。
     strict = sum(1 for s in selected if s["bucket"] == "major4_existing_store")
     if strict < 18:
+        # 不足分は「主要4業態の月次統計記事（既存店表記なし）」で補う。
+        # **個社決算を混ぜない**（それは区分⑧ の性質であり NFR-04 の評価対象にならない）。
         selected += pick(
             candidates,
             lambda c: bool(set(f(c)["segment_alias_hits"]) & set(MAJOR4))
-            and f(c)["period_kind"] is not None,
+            and f(c)["period_kind"] == "month"
+            and f(c)["is_statistics_like"]
+            and f(c)["value_tokens"] > 0,
             18 - strict, "major4_existing_store",
-            "主要4業態の別名に一致 かつ 期間表記あり（**既存店表記なし = 全店系**。"
-            "厳密条件が 12 件しか無いための補充枠。期待値の確定時に scope を要確認）",
+            "主要4業態の月次統計だが「既存店」表記なし = **全店系**（厳密条件が"
+            "12 件しか実在しないための補充枠。期待値の scope を要確認）",
             taken,
         )
+
+    # ⑤-b 定性表現のみ。連続記録側は「対象内 × 値あり」が母集団に 2 件しか無い
+    #     （設計 §7.3 が名指しする 51カ月＝SC と 40カ月＝スーパー）ため適応枠にする。
+    streak_n = sum(1 for s in selected if s["bucket"] == "qualitative_and_streak")
     selected += pick(
-        candidates, lambda c: f(c)["pct_tokens"] >= 2,
-        8, "multi_metric", "% トークンが 2 個以上（複数指標の分解対象）", taken,
+        candidates,
+        lambda c: f(c)["has_qualitative"] and f(c)["value_tokens"] == 0,
+        6 - streak_n, "qualitative_and_streak",
+        "定性表現のみ（期待値は value=None / sign_only / needs_source_check=True）",
+        taken,
     )
-    # 期間は「**全 5 種**」が要求なので、まず各種 1 件ずつ確保してから残り 3 枠を埋める。
-    # 種類ごとに 2 件ずつ取る方式だと、枠数（8）が種類数（5）で割り切れず、
-    # 最後の種類（実データで最多の「月次」）が 0 件になって「全 5 種」を満たさない。
+
+    # ② 複数指標。**対象内に限る**（FR-11 の評価対象は業態が解決できる行）
+    selected += pick(
+        candidates,
+        lambda c: f(c)["pct_tokens"] >= 2 and in_scope(c),
+        8, "multi_metric", "% トークンが 2 個以上 かつ 対象内（1 行が複数 observation に分解される）", taken,
+    )
+
+    # ③ 期間 5 種を 1 件ずつ確保してから残り枠を埋める
     for kind in PERIOD_KINDS:
         selected += pick(
             candidates, lambda c, k=kind: f(c)["period_kind"] == k,
@@ -249,36 +398,18 @@ def main() -> int:
         max(0, 8 - sum(1 for s in selected if s["bucket"] == "period_all_5_types")),
         "period_all_5_types", "期間表記あり（5 種確保後の残り枠）", taken,
     )
-    selected += pick(
-        candidates, lambda c: f(c)["has_fullwidth_pct"] or f(c)["has_kagetsu_variant"],
-        6, "notation_variants", "全角％ または カ月表記のゆれを含む", taken,
-    )
-    selected += pick(
-        candidates, lambda c: f(c)["has_qualitative"] or f(c)["has_streak"],
-        6, "qualitative_and_streak", "定性表現 または 連続記録表現を含む", taken,
-    )
-    selected += pick(
-        candidates, lambda c: f(c)["has_authority_marker"] and f(c)["segment_alias_hits"],
-        4, "multi_authority", "発表主体マーカー（経産省調べ等）と業態別名の両方を含む", taken,
-    )
-    # `no_numeric` は「数字が 1 つも無い行」ではなく「**値が取れない行**」である。
-    # G1 が挙げる実例 `ホームセンター月次実績＝2026年6月度` は 2026 と 6 という
-    # 数字を持つが、率でも金額でもないため値は取れない。`numeric_tokens == 0` で
-    # 判定すると、この設計自身の代表例が候補から落ち、代わりに個社決算記事
-    # （本来 out_of_scope）が入ってしまう。
-    # さらに「業態は解決できる」ことを条件に加える。対象内なのに値が取れない、
-    # というのが no_numeric と out_of_scope を分ける点だからである。
+
+    # ④ 表記ゆれ（原文で判定）
     selected += pick(
         candidates,
-        lambda c: f(c)["value_tokens"] == 0 and f(c)["segment_alias_hits"],
-        4, "no_numeric",
-        "業態は解決できるが値トークン（% / 金額）が 0"
-        "（期待値は unresolved / no_numeric。out_of_scope との違いは対象内である点）",
-        taken,
+        lambda c: f(c)["has_fullwidth_pct"] or f(c)["has_kagetsu_variant"] or f(c)["has_fullwidth_digit"],
+        6, "notation_variants", "全角％ / 全角数字 / カ月表記のゆれを原文に含む", taken,
     )
+
+    # ⑧-b 対象範囲外（個社決算・非統計記事）
     selected += pick(
         candidates,
-        lambda c: not f(c)["segment_alias_hits"] and not f(c)["has_authority_marker"],
+        lambda c: not in_scope(c) and not f(c)["has_authority_marker"],
         4, "out_of_scope", "業態別名にも発表主体マーカーにも一致しない（個社・非統計記事）", taken,
     )
 
