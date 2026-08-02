@@ -45,7 +45,7 @@ from retail_stats import config, digest, textnorm  # noqa: E402
 
 # G1 の選定基準表（区分 → 件数）。合計 60。
 BUCKETS: tuple[tuple[str, int, str], ...] = (
-    ("major4_existing_store", 18, "主要 4 業態（SC / 百貨店 / チェーンストア / コンビニ）の月次既存店指標"),
+    ("major4_existing_store", 16, "主要 4 業態（SC / 百貨店 / チェーンストア / コンビニ）の月次既存店指標"),
     ("multi_metric", 8, "複数指標を含む記事（FR-11）"),
     ("period_all_5_types", 8, "期間表記の全 5 種（月次 / 決算期 / 四半期 / 半期 / 年度）"),
     ("notation_variants", 6, "表記ゆれ（全角％ / 半角% / 全角数字 / カ月・ヶ月）"),
@@ -195,6 +195,19 @@ def pick(candidates: list[dict], predicate, count: int, bucket: str, why: str, t
     return chosen
 
 
+def _subject_first(item: dict) -> int:
+    """業態別名が**タイトル冒頭**に来ているか（0 = 来ている / 1 = 来ていない）。
+
+    設計 §4.3.3 の主語位置ガードと同じ考え方。`日本百貨店協会／3月の売上高…` は
+    協会そのものが主語だが、`大手百貨店／3月売上高 三越伊勢丹7.6%増…` は
+    個社の集計であり、業態別名は冒頭に来ない。並立ペアの「協会側」には
+    前者を選ぶ必要がある（後者は 制約 15 の個社開示にあたり observation に
+    ならない）。sort キーに使うので、真を 0 にして昇順で先に来るようにする。
+    """
+    norm = item["normalized_title"]
+    return 0 if any(norm.startswith(a) for a in item.get("_aliases", ())) else 1
+
+
 def pick_authority_pairs(candidates: list[dict], count: int, taken: set) -> list[dict]:
     """**発表主体が並立するペアを両側そろえて**選ぶ（G1 区分⑥ / 制約 14）。
 
@@ -212,9 +225,20 @@ def pick_authority_pairs(candidates: list[dict], count: int, taken: set) -> list
         month = item["_month_hint"]
         if not segs or not month:
             continue
+        if not f["is_statistics_like"] or f["value_tokens"] == 0:
+            # **両側とも値を持つ統計記事に限る。** 制約 14 の期待値は
+            # 「2 レコードが共存し、どちらも上書きされない」であり、片側が
+            # 定性のみ・値なしだと共存を値で示せない（`3月の百貨店売上高、
+            # 全社増収` を協会側に選ぶと、真の協会統計 `日本百貨店協会／
+            # 3月の売上高3.2％増` が別区分に流れてペアが成立しない）。
+            continue
         groups.setdefault((segs[0], month), {}).setdefault(
             "meti" if f["has_authority_marker"] else "association", []
         ).append(item)
+
+    for sides in groups.values():
+        for side in sides.values():
+            side.sort(key=lambda x: (_subject_first(x), _sort_key(x)))
 
     chosen = []
     for key in sorted(groups):
@@ -285,6 +309,7 @@ def main() -> int:
                 "first_digest_date": min(r.digest_date for r in group),
                 "appeared_dates": sorted({r.digest_date for r in group}),
                 "_month_hint": month_hint(norm),
+                "_aliases": [a for a, _ in cat.segment_alias_index() if a in norm],
                 "features": classify(title, norm, cat),
                 "expected": None,
                 "status": "needs_human_review",
@@ -351,10 +376,18 @@ def main() -> int:
     selected += pick(
         candidates,
         lambda c: bool(set(f(c)["segment_alias_hits"]) & set(MAJOR4)) and f(c)["has_existing_store"],
-        18, "major4_existing_store", "主要4業態の別名に一致 かつ 「既存店」を含む（G1 の厳密条件）", taken,
+        16, "major4_existing_store", "主要4業態の別名に一致 かつ 「既存店」を含む（G1 の厳密条件）", taken,
     )
+    # **G1 は 18 件を求めるが、母集団から 18 件は取れない（G-6）。**
+    # 主要4業態にヒットする一意 URL は 34 件。うち既存店表記ありが 12、
+    # 「既存店表記なしの月次統計・値あり」が 9 で計 21。ここから ⑤（連続記録）が 1、
+    # ⑥（発表主体ペア）が 4 を先に確保するため、残りは 16 件が上限になる。
+    # これ以上広げるには個社決算（セブン＆アイ / J.フロント / 個社SC の年度売上）を
+    # 入れるしかなく、制約 15 が out_of_scope と定める行を NFR-04 の評価枠に
+    # 混ぜることになる（checker が F7 として差し戻した欠陥そのもの）。
+    # **件数を満たすために性質を捨てない。** 不足は origin.md D-E の G-6 で報告する。
     strict = sum(1 for s in selected if s["bucket"] == "major4_existing_store")
-    if strict < 18:
+    if strict < 16:
         # 不足分は「主要4業態の月次統計記事（既存店表記なし）」で補う。
         # **個社決算を混ぜない**（それは区分⑧ の性質であり NFR-04 の評価対象にならない）。
         selected += pick(
@@ -363,7 +396,7 @@ def main() -> int:
             and f(c)["period_kind"] == "month"
             and f(c)["is_statistics_like"]
             and f(c)["value_tokens"] > 0,
-            18 - strict, "major4_existing_store",
+            16 - strict, "major4_existing_store",
             "主要4業態の月次統計だが「既存店」表記なし = **全店系**（厳密条件が"
             "12 件しか実在しないための補充枠。期待値の scope を要確認）",
             taken,
@@ -424,8 +457,15 @@ def main() -> int:
         got = sum(1 for s in selected if s["bucket"] == name)
         mark = "OK " if got == want else "!! "
         print(f"  {mark}{name:<24} {got:>2} / {want:<2}  {why}")
-    if len(selected) != 60:
-        print(f"\n[warn] 合計が 60 件になっていません（{len(selected)} 件）。", file=sys.stderr)
+    expected_total = sum(n for _, n, _ in BUCKETS)
+    if len(selected) != expected_total:
+        print(f"\n[warn] 合計が {expected_total} 件になっていません（{len(selected)} 件）。", file=sys.stderr)
+    if expected_total != 60:
+        print(
+            f"\n[G-6] G1 の合計は 60 件だが、本母集団から取れるのは {expected_total} 件。"
+            "\n      区分① は 18 件を求められているが 16 件が上限（母集団の枯渇）。"
+            "\n      不足 2 件を埋めるには個社決算を混ぜるしかなく、制約 15 に反する。"
+        )
     print("\n**期待値は未確定です。** 各行の expected を人手で埋め、status を confirmed にしてから")
     print("tests/fixtures/golden-60.jsonl として凍結してください（ループ設計 §3.3 G1）。")
     return 0
