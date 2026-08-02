@@ -29,6 +29,18 @@ from __future__ import annotations
 
 import argparse
 import sys
+from collections import Counter
+from pathlib import Path
+
+from retail_stats import catalog as catalog_mod
+from retail_stats import config, digest
+from retail_stats.models import CatalogError
+
+# 終了コード契約（実装設計 §2.5）
+EXIT_OK = 0
+EXIT_DATA_ERROR = 1
+EXIT_ARG_ERROR = 2
+EXIT_IO_ERROR = 3
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -38,7 +50,134 @@ def build_arg_parser() -> argparse.ArgumentParser:
     表の「対象サブコマンド」列のとおりに絞ること（例: --invalidate-cache は
     build のみ）。
     """
-    raise NotImplementedError("実装設計 §2.5 の引数表に基づき実装する")
+    parser = argparse.ArgumentParser(
+        prog="python3 -m retail_stats",
+        description="小売月次統計トラッカー（日次ダイジェスト B5 章 → 時系列データ → 単一 HTML）",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def add_common(p: argparse.ArgumentParser) -> None:
+        """build / html / measure に共通する引数（§2.5 の表）。"""
+        p.add_argument(
+            "--org",
+            default=config.DEFAULT_ORG,
+            metavar="SLUG",
+            help="処理対象組織。`.companies/{slug}/` を基点にする（既定: %(default)s）。"
+            " パスではなく組織スラグを渡すこと。データ層の所在は環境変数"
+            f" {config.WORKSPACE_ENV_VAR} で差し替える",
+        )
+
+    def add_scan(p: argparse.ArgumentParser) -> None:
+        """build / measure に共通する走査系の引数（§2.5 の表）。"""
+        p.add_argument("--rebuild", action="store_true", help="manifest を無視して全 MD を処理（FR-12）")
+        p.add_argument("--since", metavar="YYYY-MM-DD", help="指定日以降の digest のみ処理（デバッグ用）")
+        p.add_argument(
+            "--no-llm",
+            action="store_true",
+            help="LLM を新規に呼ばない。extraction-cache.json のヒットは通常どおり使う",
+        )
+        p.add_argument("--report-json", metavar="PATH", help="差分レポートを JSON で書き出す（FR-22）")
+        p.add_argument(
+            "--fail-on-unresolved-rate",
+            type=float,
+            metavar="R",
+            help="未解決率が R を超えたら exit 1（NFR-05 の CI ガード）",
+        )
+
+    p_build = sub.add_parser("build", help="増分実行（既定）")
+    add_common(p_build)
+    add_scan(p_build)
+    p_build.add_argument(
+        "--invalidate-cache",
+        action="store_true",
+        help="extraction-cache.json を破棄して LLM を再実行する。指定しない限りキャッシュは絶対に破棄しない",
+    )
+    p_build.add_argument(
+        "--dry-run", action="store_true", help="標準出力にサマリーを出すのみでファイルを書かない"
+    )
+
+    p_html = sub.add_parser("html", help="HTML のみ再生成（データは変更しない）")
+    add_common(p_html)
+
+    p_measure = sub.add_parser("measure", help="reason_code 別の未解決分布を計測する")
+    add_common(p_measure)
+    add_scan(p_measure)
+
+    return parser
+
+
+def _print_resolved_inputs(org: str) -> dict[str, str]:
+    """どの入力を読んだかを必ず出力する（origin.md D-A）。
+
+    カタログが正準パスとリポジトリ内スナップショットのどちらから読まれたかが
+    出力に現れないと、入力を取り違えたまま処理が進んだことに誰も気づけない。
+    """
+    info = config.resolved_inputs(org)
+    print("入力の解決結果")
+    print(f"  repo_root       : {info['repo_root']}")
+    print(f"  workspace_root  : {info['workspace_root']}")
+    print(f"  {config.WORKSPACE_ENV_VAR:<16}: {info['workspace_override']}")
+    print(f"  org             : {info['org']}")
+    print(f"  catalog         : {info['catalog_path']}")
+    print(f"                    source={info['catalog_source']} exists={info['catalog_exists']}")
+    print(f"  digest_dir      : {info['digest_dir']} (exists={info['digest_dir_exists']})")
+    print(f"  data_dir        : {info['data_dir']}")
+    return info
+
+
+def _scan_digests(digest_dir: Path, since: str | None) -> list:
+    files = digest.iter_digest_files(digest_dir, since=since)
+    return [digest.parse_file(p) for p in files]
+
+
+def _print_scan_summary(results: list) -> None:
+    """M1 の完了条件が読み取れる形でサマリーを出す（実装設計 §8 M1）。"""
+    with_section = [r for r in results if r.has_section]
+    with_table = [r for r in results if r.has_table]
+    rows = [row for r in results for row in r.rows]
+    malformed = [m for r in results for m in r.malformed]
+    without_section = [r.digest_date for r in results if not r.has_section]
+    variants = Counter(r.header_variant for r in with_table)
+
+    print()
+    print("ダイジェスト走査（FR-01 / FR-02）")
+    print(f"  走査ファイル              : {len(results)}")
+    print(f"  決算・統計章を持つファイル: {len(with_section)}")
+    print(f"  表を持つファイル          : {len(with_table)}")
+    print(f"  データ行（延べ）          : {len(rows)}")
+    print(f"  リンク抽出成功            : {len(rows)} / {len(rows) + len(malformed)}")
+    print(f"  一意 URL                  : {len({row.url for row in rows})}")
+    print(f"  ヘッダのバリエーション    : {len(variants)} 種")
+    for variant, count in variants.most_common():
+        print(f"      {variant}  x{count}")
+
+    # 章が無い日は例外ではなく通常系。スキップ日数を必ず出す（要件 7-1）
+    print(f"  files_without_section     : {len(without_section)}")
+    if without_section:
+        print(f"      {', '.join(without_section)}")
+
+    # 捨てずに落とした行は必ず可視化する（要件 7-12 / NFR-10）
+    if malformed:
+        reasons = Counter(m.reason for m in malformed)
+        print(f"  malformed（未解決へ退避） : {len(malformed)} {dict(reasons)}")
+        for item in malformed[:5]:
+            print(f"      [{item.reason}] {item.digest_date}: {item.raw_line[:100]}")
+
+
+def _print_catalog_summary(cat) -> None:
+    """M2 の完了条件（ID 一覧と発表主体コードの一覧）を出す（実装設計 §8 M2）。"""
+    print()
+    print("カタログ（IF-02）")
+    print(f"  source_sha256 : {cat.source_sha256}")
+    print(f"  業態          : {len(cat.segments)} 件")
+    print(f"      {', '.join(s.segment_id for s in cat.segments)}")
+    print(f"  指標          : {len(cat.metrics)} 件")
+    print(f"      {', '.join(m.metric_id for m in cat.metrics)}")
+    authorities = Counter(s.source_authority for s in cat.segments)
+    print(f"  発表主体コード: {len(authorities)} 種")
+    for code, count in sorted(authorities.items()):
+        owners = [s.segment_id for s in cat.segments if s.source_authority == code]
+        print(f"      {code:<30} x{count}  ({', '.join(owners)})")
 
 
 def cmd_build(args: argparse.Namespace) -> int:
@@ -46,8 +185,51 @@ def cmd_build(args: argparse.Namespace) -> int:
 
     digest.py → catalog.py → cache.py → parser.py → llm.py → store.upsert()
     の順に結線する（実装設計 §1.3 パイプライン内部のデータフロー図）。
+
+    M1 時点では `--dry-run` のみが完走する。パース以降（M3〜M5）と永続化
+    （M4）は未実装であり、`--dry-run` なしの実行は「書ける中身が無い」
+    ため exit 1 で止める。空の成果物で既存を上書きしない（NFR-12）。
     """
-    raise NotImplementedError("M1〜M5 の完成後に結線する（実装設計 §8 マイルストーン）")
+    info = _print_resolved_inputs(args.org)
+
+    try:
+        cat = catalog_mod.load(config.catalog_path(args.org))
+    except CatalogError as exc:
+        print(f"カタログの検証に失敗しました:\n{exc}", file=sys.stderr)
+        return EXIT_DATA_ERROR
+    except OSError as exc:
+        print(f"カタログを読み込めません: {exc}", file=sys.stderr)
+        return EXIT_IO_ERROR
+    _print_catalog_summary(cat)
+
+    digest_dir = config.digest_dir(args.org)
+    if not digest_dir.is_dir():
+        print(
+            f"ダイジェストのディレクトリがありません: {digest_dir}\n"
+            f"  → cc-sier-organization の作業コピーを {config.WORKSPACE_ENV_VAR} で指すか、"
+            f"テスト用フィクスチャを使ってください（origin.md D-A）",
+            file=sys.stderr,
+        )
+        return EXIT_IO_ERROR
+
+    try:
+        results = _scan_digests(digest_dir, args.since)
+    except OSError as exc:
+        print(f"ダイジェストを読み込めません: {exc}", file=sys.stderr)
+        return EXIT_IO_ERROR
+    _print_scan_summary(results)
+
+    if not args.dry_run:
+        print(
+            "\nパース・永続化は未実装です（実装設計 §8 の M3 / M4）。"
+            "\n  → 現時点で書き出せる成果物が無いため、既存データを空で上書きしないよう停止します（NFR-12）。"
+            "\n  → 走査結果の確認には --dry-run を使ってください。",
+            file=sys.stderr,
+        )
+        return EXIT_DATA_ERROR
+
+    print("\n--dry-run のためファイルは書き出していません。")
+    return EXIT_OK
 
 
 def cmd_html(args: argparse.Namespace) -> int:
@@ -67,4 +249,19 @@ def cmd_measure(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """CLI エントリポイント。__main__.py から呼ばれる。"""
-    raise NotImplementedError("build_arg_parser() の結果からサブコマンドを振り分ける")
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+    handlers = {"build": cmd_build, "html": cmd_html, "measure": cmd_measure}
+    handler = handlers.get(args.command)
+    if handler is None:  # argparse の required=True により通常は到達しない
+        parser.error(f"未知のサブコマンド: {args.command}")
+        return EXIT_ARG_ERROR
+    try:
+        return handler(args)
+    except NotImplementedError as exc:
+        # 未実装は「握り潰さずに終了コードで示す」（NFR-10 / §2.5 の終了コード契約）
+        print(f"未実装のサブコマンドです: {exc}", file=sys.stderr)
+        return EXIT_DATA_ERROR
+    except FileNotFoundError as exc:
+        print(f"パス解決に失敗しました: {exc}", file=sys.stderr)
+        return EXIT_IO_ERROR

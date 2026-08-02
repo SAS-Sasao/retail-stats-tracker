@@ -24,10 +24,38 @@ cc-sier-organization 側の .companies/domain-tech-collection/docs/daily-digest/
 from __future__ import annotations
 
 import argparse
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from retail_stats import config, digest  # noqa: E402
+
+_H2_RE = re.compile(r"^##\s+(.+)$")
+_H3_RE = re.compile(r"^###\s+(.+)$")
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    raise NotImplementedError("実装設計 §7.3 の --dates / --out 引数を実装する")
+    parser = argparse.ArgumentParser(
+        description="実データから決算・統計章のみを抜き出して最小の MD フィクスチャを生成する"
+    )
+    parser.add_argument(
+        "--dates",
+        action="append",
+        required=True,
+        metavar="YYYY-MM-DD,...",
+        help="対象日（カンマ区切り）。複数回指定できる",
+    )
+    parser.add_argument("--out", required=True, metavar="DIR", help="出力先ディレクトリ")
+    parser.add_argument(
+        "--source",
+        metavar="DIR",
+        help="実データの digest ディレクトリ。省略時は config.digest_dir()"
+        f"（{config.WORKSPACE_ENV_VAR} で cc-sier の作業コピーを指せる）",
+    )
+    parser.add_argument("--org", default=config.DEFAULT_ORG, metavar="SLUG")
+    return parser
 
 
 def extract_section(md_text: str, digest_date: str) -> str | None:
@@ -35,12 +63,93 @@ def extract_section(md_text: str, digest_date: str) -> str | None:
 
     章が存在しない日は None を返す（呼び出し側が 2026-04-14 のように
     「章なし」フィクスチャとして別扱いする）。
+
+    章の検出は `digest.SECTION_KEYWORD` の部分一致であり、章番号（B5）には
+    依存しない（要件 7-1）。パーサ側と同じ判定条件を使うことで、
+    フィクスチャとパーサが別々の「章の定義」を持つことを防ぐ。
     """
-    raise NotImplementedError
+    lines = md_text.splitlines()
+    captured: list[str] = []
+    in_section = False
+    heading = None
+    for line in lines:
+        stripped = line.strip()
+        m3 = _H3_RE.match(stripped)
+        if m3:
+            in_section = digest.SECTION_KEYWORD in m3.group(1)
+            if in_section:
+                heading = stripped
+            continue
+        if _H2_RE.match(stripped):
+            in_section = False
+            continue
+        if in_section:
+            captured.append(line.rstrip())
+    if heading is None:
+        return None
+    body = "\n".join(captured).strip("\n")
+    return "\n".join(
+        [
+            f"# 日次ダイジェスト {digest_date}",
+            "",
+            "## B. 小売ドメイン",
+            "",
+            heading,
+            "",
+            body,
+            "",
+        ]
+    )
 
 
 def main() -> int:
-    raise NotImplementedError("実装設計 §7.3 のフィクスチャ生成フローを実装する")
+    args = build_arg_parser().parse_args()
+    source = Path(args.source) if args.source else config.digest_dir(args.org)
+    if not source.is_dir():
+        print(
+            f"実データの digest ディレクトリがありません: {source}\n"
+            f"  → --source で指すか、{config.WORKSPACE_ENV_VAR} に"
+            " cc-sier-organization の作業コピーを設定してください（origin.md D-A）",
+            file=sys.stderr,
+        )
+        return 3
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    dates: list[str] = []
+    for group in args.dates:
+        dates.extend(d.strip() for d in group.split(",") if d.strip())
+
+    written = 0
+    for date in sorted(set(dates)):
+        src = source / f"{date}.md"
+        if not src.is_file():
+            print(f"[warn] 実データがありません: {src}", file=sys.stderr)
+            continue
+        section = extract_section(src.read_text(encoding="utf-8"), date)
+        if section is None:
+            # 章が無い日も「章が無いこと」を検証するフィクスチャとして生成する
+            # （T-10a。存在しないファイルにすると走査対象から外れて検証にならない）
+            section = "\n".join(
+                [
+                    f"# 日次ダイジェスト {date}",
+                    "",
+                    "## B. 小売ドメイン",
+                    "",
+                    "### B1. 業態変革・新店",
+                    "",
+                    "（このフィクスチャは決算・統計章が存在しない日の検証用。"
+                    "実データの当日も同章を持たない）",
+                    "",
+                ]
+            )
+            print(f"[info] {date}: 決算・統計章なし → 章なしフィクスチャを生成")
+        (out / f"{date}.md").write_text(section, encoding="utf-8")
+        written += 1
+
+    print(f"{written} 件のフィクスチャを {out} に生成しました。")
+    return 0
 
 
 if __name__ == "__main__":
