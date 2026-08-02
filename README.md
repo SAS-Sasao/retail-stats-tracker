@@ -6,7 +6,8 @@
 
 ## 状態
 
-**設計完了・実装未着手**（スキャフォールドのみ）。設計は
+**M1 / M2 完了、golden-60 凍結済み。次は M3（決定論パース）。**
+進捗と再開点は `docs/design/origin.md` の D-E を参照。設計は
 [cc-sier-organization](https://github.com/SAS-Sasao/cc-sier-organization)
 リポジトリの組織「domain-tech-collection」で策定された。
 
@@ -37,7 +38,24 @@ python3 -m unittest discover -s scripts/retail-stats-tracker/tests
 基づく骨格（docstring + 関数シグネチャ）のみで、本体は未実装。
 実装マイルストーンは `CLAUDE.md`「実装マイルストーン」節を参照。
 
+## 配信先
+
+生成した単一 HTML は **cc-sier-organization の GitHub Pages** で配信する
+（要件 IF-05 / `docs/design/origin.md` D-G）。
+
+```
+公開 URL: https://sas-sasao.github.io/cc-sier-organization/retail-stats/
+出力先  : {workspace}/docs/retail-stats/index.html
+```
+
+`RETAIL_STATS_WORKSPACE` で cc-sier の作業コピーを指すと、そちらの `docs/` に
+書き出される。未設定なら本リポジトリの `docs/` に出るので、`file://` で開いて
+ローカルプレビューできる（NFR-08 で単一 HTML に自己完結しており、
+ネットワークを切っても全機能が動く）。
+
+**M6 が未実装のため、現時点ではまだ生成されていない。**
+
 ## ライセンス・組織情報
 
-private リポジトリ。設計のトレーサビリティは `docs/design/origin.md` を
+public リポジトリ。設計のトレーサビリティは `docs/design/origin.md` を
 参照。

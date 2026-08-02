@@ -82,7 +82,7 @@ RETAIL_STATS_WORKSPACE=/path/to/cc-sier-organization \
 | カタログ | ① `{workspace}/.companies/{org}/docs/retail-domain/retail-monthly-kpi-catalog.md` → ② `{repo_root}/docs/design/retail-monthly-kpi-catalog.md`（本リポジトリのスナップショット） |
 | ダイジェスト | `{workspace}/.companies/{org}/docs/daily-digest/`（フォールバックなし） |
 | データ出力 | `{workspace}/.companies/{org}/docs/retail-stats/data/`（フォールバックなし） |
-| 配信 HTML | `{repo_root}/docs/retail-stats/index.html`（org 非依存） |
+| 配信 HTML | `{workspace}/docs/retail-stats/index.html`（org 非依存だが**配信先リポに追随**。公開は https://sas-sasao.github.io/cc-sier-organization/retail-stats/ ） |
 
 どちらのカタログを読んだかは `config.resolved_inputs()` の `catalog_source`
 （`canonical` / `repo-snapshot`）で分かる。

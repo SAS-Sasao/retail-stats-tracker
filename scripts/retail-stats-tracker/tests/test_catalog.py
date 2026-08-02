@@ -462,6 +462,44 @@ class TestCatalogPathResolution(unittest.TestCase):
         self.assertIn(info["catalog_source"], ("canonical", "repo-snapshot"))
         self.assertEqual(info["catalog_path"], str(config.catalog_path()))
 
+    def test_html_output_follows_the_delivering_repo(self):
+        """配信 HTML は**配信するリポジトリ**（ワークスペース）に追随する。
+
+        配信は cc-sier-organization の GitHub Pages で行う（origin.md D-G）。
+        ここが repo_root 固定だと、cc-sier の作業コピーを指して build しても
+        HTML が本リポジトリ側に出てしまい、Pages に載らない。
+        未設定時は本リポジトリの docs/ に出て、ローカルプレビューとして機能する。
+        """
+        import os
+        import tempfile
+
+        root = config.find_repo_root()
+        original = os.environ.get(config.WORKSPACE_ENV_VAR)
+        try:
+            os.environ.pop(config.WORKSPACE_ENV_VAR, None)
+            self.assertEqual(config.html_output_path(root), root / config.HTML_RELPATH)
+            with tempfile.TemporaryDirectory() as tmp:
+                os.environ[config.WORKSPACE_ENV_VAR] = tmp
+                self.assertEqual(
+                    config.html_output_path(root), Path(tmp).resolve() / config.HTML_RELPATH
+                )
+        finally:
+            os.environ.pop(config.WORKSPACE_ENV_VAR, None)
+            if original is not None:
+                os.environ[config.WORKSPACE_ENV_VAR] = original
+
+    def test_public_site_url_matches_pages_layout(self):
+        """cc-sier の Pages は main ブランチ `/docs` を配信する。
+
+        `docs/retail-stats/index.html` が `.../cc-sier-organization/retail-stats/`
+        で見えることの記録（IF-05）。
+        """
+        self.assertEqual(
+            config.PUBLIC_SITE_URL,
+            "https://sas-sasao.github.io/cc-sier-organization/retail-stats/",
+        )
+        self.assertTrue(config.HTML_RELPATH.startswith("docs/retail-stats/"))
+
     def test_org_slug_is_not_a_path(self):
         """`--org` は組織スラグのまま（実装設計 §2.5）。パスを受け取らない。"""
         root = config.find_repo_root()
