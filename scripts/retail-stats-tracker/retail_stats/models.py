@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 # reason_code の enum 7 値（要件定義 §4.2 / v0.1.1 で out_of_scope を追加）。
@@ -23,6 +24,44 @@ REASON_CODES = (
 
 # extraction_method の値（実装設計 §1.2 二段ハイブリッド）
 EXTRACTION_METHODS = ("deterministic", "llm")
+
+# --- カタログの enum（IF-02 / 実装設計 §3.2・§3.3）-------------------------
+# ここは「値の集合」だけを持つ。カタログ日本語表記からこれらへの変換表
+# （単位対応表・スコープ対応表・発表主体対応表）は catalog.py 側にある。
+ENTITY_TYPES = ("association", "company", "macro")
+VALUE_TYPES = ("ratio", "absolute")
+DIRECTION_HINTS = ("higher_is_better", "lower_is_better", "neutral")
+UNITS = ("percent_yoy", "percent", "jpy_oku", "count", "index")
+SCOPES = ("existing_store", "all_store", "total_supply", "n_a")
+
+# 発表主体コード（要件 IF-02 発表主体対応表）。natural key の第 5 要素に
+# 入るため、自由記述の日本語ではなく kebab-case のコードで保持する。
+SOURCE_AUTHORITY_CODES = (
+    "meti",
+    "mic",
+    "sc-association",
+    "department-store-association",
+    "chain-store-association",
+    "food-service-association",
+    "co-op-union",
+    "industry-association",
+    "trade-press",
+    "private-research",
+)
+
+# V1: segment_id / metric_id の形式（kebab-case）
+ID_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+class CatalogError(Exception):
+    """カタログが IF-02 スキーマ契約に違反したときに送出する（FR-24）。
+
+    実装設計 §3.3 は `catalog.py` に置くと書いているが、`Catalog.validate()`
+    が同じ例外を送出する以上、レイヤ 0 の models.py が catalog.py を import
+    することになり §2.3 の依存方向（models は何にも依存しない）が壊れる。
+    そこで実体を models.py に置き、`catalog.CatalogError` は同じクラスへの
+    別名にする（クラスは 1 つだけ）。origin.md「設計書に無い判断」に記録。
+    """
 
 
 @dataclass(frozen=True)
@@ -64,26 +103,175 @@ class Catalog:
 
     def segment(self, segment_id: str) -> Segment:
         """未定義なら CatalogError を送出する（FR-24）。"""
-        raise NotImplementedError
+        for seg in self.segments:
+            if seg.segment_id == segment_id:
+                return seg
+        raise CatalogError(f"未定義の segment_id: {segment_id!r}")
 
     def metric(self, metric_id: str) -> Metric:
         """未定義なら CatalogError を送出する（FR-24）。"""
-        raise NotImplementedError
+        for met in self.metrics:
+            if met.metric_id == metric_id:
+                return met
+        raise CatalogError(f"未定義の metric_id: {metric_id!r}")
 
     def segment_alias_index(self) -> tuple[tuple[str, str], ...]:
         """(別名, segment_id) の索引。長さ降順（最長一致のため。§3.2）。"""
-        raise NotImplementedError
+        return _alias_index((s.aliases, s.segment_id) for s in self.segments)
 
     def metric_alias_index(self) -> tuple[tuple[str, str], ...]:
         """(別名, metric_id) の索引。長さ降順。"""
-        raise NotImplementedError
+        return _alias_index((m.aliases, m.metric_id) for m in self.metrics)
 
     def validate(self) -> None:
         """V1〜V13（実装設計 §3.3）を検査し、違反があれば CatalogError を送出する。
 
         1 つでも違反があれば全件を列挙して停止する（部分的に読み込んで続行しない）。
+
+        カタログ MD の行番号は Catalog に持たせていないため、ここでの
+        メッセージは ID ベースになる。行番号付きのメッセージは
+        `catalog.load()` がパース中に（生セルと行番号が手元にある位置で）
+        組み立てる。両者は同じ述語ヘルパを共有しており判定は一致する。
         """
-        raise NotImplementedError
+        violations: list[str] = []
+        violations += _validate_ids(self.segments, "segment_id")
+        violations += _validate_ids(self.metrics, "metric_id")
+        violations += _validate_enums(self.segments, self.metrics)
+        violations += _validate_parents(self.segments)
+        violations += _validate_aliases(self.segments, "segment_id")
+        violations += _validate_aliases(self.metrics, "metric_id")
+        if violations:
+            raise CatalogError(
+                f"カタログのバリデーションに失敗しました（{len(violations)} 件）:\n  - "
+                + "\n  - ".join(violations)
+            )
+
+
+def _alias_index(pairs) -> tuple[tuple[str, str], ...]:
+    """(aliases, id) の並びを (別名, id) の長さ降順索引に畳む。
+
+    同長の別名は文字列昇順で安定させる（走査順に結果が依存しないこと =
+    NFR-06 の再現性がキャッシュキーや upsert 順にも効くため）。
+    """
+    out: list[tuple[str, str]] = []
+    for aliases, identifier in pairs:
+        out.extend((alias, identifier) for alias in aliases)
+    out.sort(key=lambda pair: (-len(pair[0]), pair[0], pair[1]))
+    return tuple(out)
+
+
+def _id_of(row: Segment | Metric, field: str) -> str:
+    return getattr(row, field)
+
+
+def _validate_ids(rows, field: str) -> list[str]:
+    """V1（kebab-case）/ V2（一意）。"""
+    violations: list[str] = []
+    seen: dict[str, int] = {}
+    for row in rows:
+        identifier = _id_of(row, field)
+        if not ID_RE.match(identifier):
+            violations.append(f"[V1] 不正な ID 形式: {identifier!r}（{field}）")
+        seen[identifier] = seen.get(identifier, 0) + 1
+    for identifier, count in seen.items():
+        if count > 1:
+            violations.append(f"[V2] {field} が重複しています: {identifier!r}（{count} 件）")
+    return violations
+
+
+def _validate_enums(segments, metrics) -> list[str]:
+    """V3 / V4 / V5 / V6 / V7 / V8 / V13。"""
+    violations: list[str] = []
+    for seg in segments:
+        if seg.entity_type not in ENTITY_TYPES:
+            violations.append(
+                f"[V3] 未知の 種別: {seg.entity_type!r}（segment_id={seg.segment_id}）"
+            )
+        if not _is_non_negative_int(seg.display_order):
+            violations.append(
+                f"[V8] 表示順が非負整数ではありません: {seg.display_order!r}"
+                f"（segment_id={seg.segment_id}）"
+            )
+        if seg.source_authority not in SOURCE_AUTHORITY_CODES:
+            violations.append(
+                f"[V13] 未知の発表主体コード: {seg.source_authority!r}"
+                f"（segment_id={seg.segment_id}、原文={seg.source_authority_label!r}）。"
+                " IF-02 発表主体対応表への追加が必要です"
+            )
+    for met in metrics:
+        if met.value_type not in VALUE_TYPES:
+            violations.append(
+                f"[V4] 未知の 値種別: {met.value_type!r}（metric_id={met.metric_id}）"
+            )
+        if met.direction_hint not in DIRECTION_HINTS:
+            violations.append(
+                f"[V5] 未知の 方向: {met.direction_hint!r}（metric_id={met.metric_id}）"
+            )
+        if met.unit not in UNITS:
+            violations.append(f"[V6] 未知の 単位: {met.unit!r}（metric_id={met.metric_id}）")
+        if met.default_scope not in SCOPES:
+            violations.append(
+                f"[V7] 未知の 既定スコープ: {met.default_scope!r}（metric_id={met.metric_id}）"
+            )
+        if not _is_non_negative_int(met.precision):
+            violations.append(
+                f"[V8] 小数桁が非負整数ではありません: {met.precision!r}"
+                f"（metric_id={met.metric_id}）"
+            )
+    return violations
+
+
+def _is_non_negative_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _validate_parents(segments) -> list[str]:
+    """V9（参照先の存在）/ V10（循環なし）。
+
+    `parent_segment_id` は表示上の系統情報としてのみ保持し、ロールアップ
+    集約には一切使わない（実装設計 §3.3）。現行カタログでは 13 行すべて
+    空欄であり、この 2 検査は将来 `種別=company` 行が追加された場合に
+    備えた防御的検査である。
+    """
+    violations: list[str] = []
+    parents = {s.segment_id: s.parent_segment_id for s in segments}
+    for segment_id, parent in parents.items():
+        if parent is not None and parent not in parents:
+            violations.append(f"[V9] 未定義の 上位業態: {parent!r}（segment_id={segment_id}）")
+    for segment_id in parents:
+        path = [segment_id]
+        current = parents[segment_id]
+        while current is not None and current in parents:
+            if current in path:
+                violations.append(
+                    "[V10] 上位業態に循環があります: " + " → ".join([*path, current])
+                )
+                break
+            path.append(current)
+            current = parents[current]
+    return sorted(set(violations), key=violations.index)
+
+
+def _validate_aliases(rows, field: str) -> list[str]:
+    """V11（別名が空でない）/ V12（同一索引内で別名が重複しない）。
+
+    V12 は決定論パースの解決可能性に直結する。別名が衝突していると
+    どの ID に寄せるかがコード側の暗黙のルールになり、NFR-09
+    （カタログ追記だけで完結する）が崩れる（実装設計 §3.3）。
+    """
+    violations: list[str] = []
+    owners: dict[str, list[str]] = {}
+    for row in rows:
+        identifier = _id_of(row, field)
+        if not row.aliases:
+            violations.append(f"[V11] 別名が空です: {field}={identifier}")
+        for alias in row.aliases:
+            owners.setdefault(alias, []).append(identifier)
+    for alias, ids in owners.items():
+        if len(set(ids)) > 1:
+            joined = " と ".join(f"{field}={i}" for i in sorted(set(ids)))
+            violations.append(f"[V12] 別名 {alias!r} が {joined} で重複しています")
+    return violations
 
 
 @dataclass(frozen=True)

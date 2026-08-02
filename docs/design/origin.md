@@ -5,21 +5,40 @@
 - **リポジトリ**: https://github.com/SAS-Sasao/cc-sier-organization
 - **組織**: domain-tech-collection
 - **コピー日**: 2026-08-02
-- **コピー元コミット**: `2da1c48844ea7cfaa07ef24b3012d3188a76c003`
+- **コピー元コミット**: `2da1c48844ea7cfaa07ef24b3012d3188a76c003`（初回）
 - **関連 PR**: #710（設計3冊のマージ） / **関連 Issue**: #711
 - **作業者**: SAS-Sasao
 
 ## コピーした成果物
 
-| ファイル | コピー元パス | 作成日 |
-|---------|------------|--------|
-| `requirements.md` | `.companies/domain-tech-collection/docs/research/retail-stats-tracker-requirements.md` | 2026-07-26 |
-| `implementation-design.md` | `.companies/domain-tech-collection/docs/research/retail-stats-tracker-design.md` | 2026-07-26 |
-| `loop-engineering-design.md` | `.companies/domain-tech-collection/docs/research/retail-stats-tracker-loop-engineering-design.md` | 2026-07-26 |
-| `cicd-design.md` | `.companies/domain-tech-collection/docs/research/retail-stats-tracker-cicd-design.md` | 2026-07-26 |
-| `retail-monthly-kpi-catalog.md` | `.companies/domain-tech-collection/docs/retail-domain/retail-monthly-kpi-catalog.md` | 2026-07-26 |
+| ファイル | コピー元パス | 作成日 | 最終同期 |
+|---------|------------|--------|---------|
+| `requirements.md` | `.companies/domain-tech-collection/docs/research/retail-stats-tracker-requirements.md` | 2026-07-26 | `2da1c48`（初回） |
+| `implementation-design.md` | `.companies/domain-tech-collection/docs/research/retail-stats-tracker-design.md` | 2026-07-26 | `2da1c48`（初回） |
+| `loop-engineering-design.md` | `.companies/domain-tech-collection/docs/research/retail-stats-tracker-loop-engineering-design.md` | 2026-07-26 | **`6a9843c`（2026-08-02 再取得）** |
+| `cicd-design.md` | `.companies/domain-tech-collection/docs/research/retail-stats-tracker-cicd-design.md` | 2026-07-26 | `2da1c48`（初回） |
+| `retail-monthly-kpi-catalog.md` | `.companies/domain-tech-collection/docs/retail-domain/retail-monthly-kpi-catalog.md` | 2026-07-26 | `2da1c48`（初回） |
 
-コピーにあたり、5 文書間の相互参照（ファイル名によるリンク）のみを新ファイル名に機械的に置換した。それ以外の本文・数値・結論は原文のまま変更していない。
+コピーにあたり、5 文書間の相互参照（ファイル名によるリンク）のみを新ファイル名に機械的に置換した。それ以外の本文・数値・結論は原文のまま変更していない。**再取得時も同じ置換のみを適用する。**
+
+### 同期履歴
+
+| 日付 | 対象 | コミット | 内容 |
+|---|---|---|---|
+| 2026-08-02 | `loop-engineering-design.md` | `6a9843c` | §2.3 ② の C4 に `発表主体` を追加 + C11 / C12 を新設（[Issue #724](https://github.com/SAS-Sasao/cc-sier-organization/issues/724) → [PR #725](https://github.com/SAS-Sasao/cc-sier-organization/pull/725)）。詳細は D-C |
+
+**同期の確認方法**（5 文書すべての乖離を検出する）:
+
+```bash
+gh api "repos/SAS-Sasao/cc-sier-organization/contents/<原本パス>" --jq '.content' \
+  | base64 -d | sed -e 's/retail-stats-tracker-requirements\.md/requirements.md/g' \
+                    -e 's/retail-stats-tracker-loop-engineering-design\.md/loop-engineering-design.md/g' \
+                    -e 's/retail-stats-tracker-cicd-design\.md/cicd-design.md/g' \
+                    -e 's/retail-stats-tracker-design\.md/implementation-design.md/g' \
+  | diff docs/design/<ローカル名> -
+```
+
+差分が出なければ同期済み。2026-08-02 時点で 5 文書すべて差分なし。
 
 ## 設計のレビュー状況
 
@@ -35,6 +54,255 @@
 - **U10（複数主体併記）**: 30 件（要対応 13 / 誤検出 17）で、1 記事に複数の企業名が併記されたとき 2 社目が黙って捨てられる問題がある。現行の衝突検出は実データで 0 件しか発火せず、対策が未実装。
 
 詳細は `loop-engineering-design.md` §1.2 / `implementation-design.md` §4.3.7・§7.2 T-8 を参照。
+
+---
+
+## 実装時の決定事項（本リポジトリ側で決めたもの）
+
+設計原本は cc-sier 側にある。以下は**設計を変更したものではなく**、設計が
+前提としていた実行環境（cc-sier-organization リポジトリ）と、本リポジトリが
+スナップショットであることの差を埋めるために決めた事項である。cc-sier 側へ
+フィードバックすべきものには ⇄ を付す。
+
+### D-A. 入力データの所在（2026-08-02 決定）
+
+**背景**: 設計は `.companies/{org}/` を基点に、入力（`docs/daily-digest/*.md`）と
+出力（`docs/retail-stats/data/`）とカタログ（`docs/retail-domain/`）を解決する
+前提で書かれている。本リポジトリにはこのツリーが存在せず、カタログのみ
+`docs/design/retail-monthly-kpi-catalog.md` にコピーがある。
+
+**選択肢の比較**:
+
+| # | 案 | 採否 | 理由 |
+|---|---|---|---|
+| 1 | **テストフィクスチャを持つ**（`tests/fixtures/` を唯一のテスト入力にする） | **採用（必須）** | 実装設計 §7.3 が既に「実ファイルを直接読むテストは、日次ダイジェストが毎日追加・修正されるため再現性を持たない」として要求している。本リポジトリの事情とは無関係に、そもそもテストはフィクスチャを読むべきである。これ単独では**実カタログに対する契約検査**（段階 0 の完了条件 (a)）が回らない |
+| 2 | **cc-sier を相対参照する**（`../cc-sier-organization/.companies/...`） | 不採用 | 兄弟ディレクトリへのチェックアウトという**暗黙の前提をコードに埋め込む**。CI（`actions/checkout` は単一リポジトリ）で再現せず、開発環境ごとに壊れ方が変わる。「動く人の環境と動かない人の環境がある」状態は、検証信号の一貫性を最優先する loop-engineering-design §1.1 の原則と正面から衝突する |
+| 3 | **`--org` に外部パスを渡せるようにする** | 不採用 | 実装設計 §2.5 は `--org SLUG` を「処理対象組織。`.companies/{slug}/` を基点にする」と定義している。パスを受理させると `{slug}` が「組織名」と「パス」の 2 つの意味を持ち、`.companies/{slug}/` というレイアウト前提そのものが壊れる。将来 cc-sier 上で `--org other-org` を指定する本来の用途とも衝突する。**§2.5 の設計意図と矛盾するため採らない** |
+| 4 | **ワークスペースルートだけを環境変数で差し替える**（`RETAIL_STATS_WORKSPACE`） | **採用** | 差し替えるのは「`.companies/` を含むディレクトリ」だけであり、`--org` は組織スラグのまま・`.companies/{org}/docs/...` の相対構造もそのまま。§2.5 の引数表に一切触れずに、データ層が別リポジトリにある状況を吸収できる。cc-sier 上で実行するときは未設定でよく、そのとき挙動は設計どおり（ワークスペースルート = リポジトリルート） |
+| 5 | **カタログのみリポジトリ内スナップショットへフォールバック** | **採用（限定）** | 段階 0 の完了条件 (a)「現行カタログが C1〜C10 を全て pass する」を本リポジトリ単体で満たすために必要。**カタログに限る**（ダイジェスト・データ出力にはフォールバックを設けない）。どちらを読んだかは `config.resolved_inputs()` が `catalog_source: canonical / repo-snapshot` として返し、CLI が必ず表示する — どの入力を読んだか分からないまま処理が進むことを許さない（§1.2 silent accumulation への配慮） |
+
+**採用した方針は 1 + 4 + 5 の組み合わせ**である。実装は `retail_stats/config.py` に集約した
+（同モジュールの責務は §2.3 で「リポジトリルート解決、org スコープのパス生成」と定義されている）。
+
+| 対象 | 解決順 |
+|---|---|
+| カタログ | ① `{workspace}/.companies/{org}/docs/retail-domain/retail-monthly-kpi-catalog.md` → ② `{repo_root}/docs/design/retail-monthly-kpi-catalog.md` |
+| ダイジェスト | `{workspace}/.companies/{org}/docs/daily-digest/`（フォールバックなし） |
+| データ出力 | `{workspace}/.companies/{org}/docs/retail-stats/data/`（フォールバックなし。書き込み先を曖昧にしない） |
+| 配信 HTML | `{repo_root}/docs/retail-stats/index.html`（org 非依存。workspace 差し替えの対象外） |
+| テスト | 常に `tests/fixtures/` を直接指す。実データの所在に依存しない |
+
+`workspace` は `RETAIL_STATS_WORKSPACE` が設定されていればその値、未設定なら
+リポジトリルート。cc-sier の作業コピーで実データを流すときは次のように使う。
+
+```bash
+RETAIL_STATS_WORKSPACE=/path/to/cc-sier-organization \
+  python3 -m retail_stats build --dry-run --rebuild
+```
+
+**⇄ cc-sier 側への申し送り**: `--org` の意味は変えていないため設計改訂は不要。
+ただし実装設計 §2.5 の引数表に「パスではなく組織スラグである」ことと、
+データ層の所在は環境変数で差し替える旨を注記できると、同じ検討を
+繰り返さずに済む。
+
+### D-B. 設計書に無い実装上の判断
+
+| # | 判断 | 理由 |
+|---|---|---|
+| B1 | `CatalogError` の実体を `models.py` に置き、`catalog.CatalogError` を同じクラスへの別名にした | 実装設計 §3.3 は `Catalog.validate()` が `CatalogError` を送出すると定めている。§3.1 のとおり `catalog.py` に定義すると、レイヤ 0 の `models.py` が `catalog.py` を import することになり §2.3 の依存方向（models は何にも依存しない）が壊れる。クラスは 1 つだけで、どちらの import パスでも同じものを指す |
+| B2 | `config.py` が `os.environ` を参照する（§2.3 の依存先は「pathlib のみ」） | D-A の `RETAIL_STATS_WORKSPACE` に必要。標準ライブラリのモジュール参照であり「外部パッケージを追加しない」（NFR-08 / P1）方針には抵触しない |
+| B3 | 行番号つきの違反メッセージは `catalog.load()` が、ID ベースの違反メッセージは `Catalog.validate()` が出す | §3.3 の違反メッセージ例は行番号を含むが（`不正な ID 形式: 'Shopping Center' (行 28)`）、`Catalog` dataclass は §3.2 で 4 フィールドに固定されており行番号を保持できない。判定そのものは両者で述語ヘルパを共有しており一致する。`validate()` は Catalog だけを引数に取る独立した検査として残る |
+| B4 | `validate_catalog.py` は `retail_stats.catalog` の定数（列名許容リスト・単位対応表・発表主体対応表）を import して使う | 同じ契約を 2 か所に書くと「hook は通すのにローダが落ちる（逆も）」という最悪の食い違いが生まれる。段階 0 では検査だけが先に存在する想定だが、本作業では M2 と同時に着手したため実装済みの定数を正とした |
+| ~~B5~~ | `validate_catalog.py` の C4 必須列に `発表主体` を含めた | **決着済み（2026-08-02）。** 暫定判断として要件 v0.1.1（上位文書）を正としたもの。Issue #724 → PR #725 で**設計原本の C4 が 6 列に修正され**、実装と一致した。現在は設計どおりであり独自判断ではない（D-C 参照） |
+| B6 | `validate_catalog.py` の C9 enum 検査に `種別`（entity_type）と `表示順` を追加した | 必須列として要求しておいて値を検査しないのは片手落ち。理由コードは既存の `enum_invalid` を共用する |
+| B12 | `digest.parse_file()` は、列マップを解決できなかったとき **ヘッダ行自身も** malformed に入れる | 列マップを解決できない以上、その行がヘッダなのかデータなのかを判別する根拠が無い。判別できないものを落とすのは要件 7-12 が禁じる欠測にあたる。実装設計 §4.1 規則 5 は「データ行」としか書いていないため、この解釈を記録する |
+| B13 | `_common.sh` に `rs_is_digest()` を追加し、`RETAIL_STATS_WORKSPACE` を指した場合の**絶対パス**もダイジェスト判定の対象にした | ① guard-readonly-inputs はリポジトリ相対パスしか見ていなかった。D-A で外部ワークスペースを指せるようにした以上、そこを見ないと IF-01 の読み取り専用契約が環境によって効いたり効かなかったりする |
+| B14 | `tests/test_golden60.py`（候補ファイルの構成を固定するテスト）を追加した | 設計のテスト一覧には無い。G1 の区分別件数は評価の妥当性そのもので、**末尾 3 区分 14 件が欠けると評価が「取れた数」だけを報酬にしてしまう**（G1 本文）。ファイルが静かに差し替わったことを検出できるようにした。期待値の中身には踏み込まない |
+| B15 | `digest.parse_file()` は、リンクを抽出できない行がヘッダとして解決できる場合、**ヘッダとして扱い直す** | 1 つの章に表が 2 つ以上あると、2 つ目のヘッダ行は列マップを持ち越したまま「リンクの無いデータ行」として誤認される。実データでは章あたり表は 1 つ（malformed 0 件）だが、誤認すると本物のデータ行と見分けがつかない形で件数がずれる。実装設計 §4.1 規則 5 は表が 1 つである前提を明示していない |
+| B17 | Skill を `.claude/skills/` 直下に置いた | ループ設計 §3.1 は `plugins/cc-sier/skills/` に置いて `.claude/skills/` へ同期する運用（`.claude/rules/skill-development.md`）を前提にしているが、本リポジトリに `plugins/` は存在しない。同期元が無い以上、直置きが唯一の選択肢 |
+| B18 | ⑧ の差分抽出に **grep を使わず awk** を使う | `grep -v '^\+\+\+'` は BRE で `\+` が量化子になり、環境によっては**不正な正規表現としてエラー終了**する（実測: ugrep が `(?m)^+++ invalid syntax`）。そこに `\|\| true` が付いていたため、エラーが「一致なし」と区別されず握り潰され、**ゲートが T1 / T3 / T5 を一切検査しないまま緑を返していた**。§1.2 の silent accumulation と同型で、しかもそれを防ぐはずのゲート自身で起きた |
+| B19 | ⑧ の `hits()` は grep の終了コード 2 以上（＝エラー）で `rs_block` する | 1（一致なし）は正常だが 2 以上は検査が動いていない。B18 の再発を、握り潰さないことで構造的に防ぐ |
+| B20 | ⑧ T4 の検出パターンに `SkipTest`（大文字 S）と `pytest.mark.skip/xfail` を追加 | 設計の例示は `skipTest` だが、**本リポジトリのテストは全て `raise unittest.SkipTest(...)` の形**であり、設計どおりのパターンでは 1 件も検出できなかった |
+| B21 | `verify.sh` は未導入ゲートを `skip` として数え、**`pass` に含めない** | 「まだ入れていない」ことが緑に見えると段階の進行そのものが観測できなくなる。設計の 1 行サマリーに `skip=` を足した（`RESULT gates=7 pass=4 fail=0 skip=3 failed=none`） |
+| B22 | golden-60 の選定を **retail-stats-qa の差し戻しを受けて作り直した** | 初版は 8 区分中 5 区分が「G1 が定義した性質を持たない行」で埋まっていた。検出できたのは checker を通したから。**件数だけを見るテストは評価データの妥当性を何も保証しない**（下記 B23） |
+| B23 | `test_golden60.py` に**性質検査**を追加（ペア成立 / 連続記録の評価可能性 / 区分②の対象内 / ⑦のランキング除外 / 期間 5 種の網羅 / 出所の偏り） | 初版は件数しか見ておらず、区分⑥に「共存」を書ける行が 0 件、⑤に `streak_broken_months` を書ける行が 0 件の状態で green だった |
+| B24 | ⑧ T3 のキーワード走査を **実装コードと hooks に限定**し、代わりに**凍結済み golden-60 の `reason_code` 変更**を専用検査にした | golden-60 候補 JSONL は区分名として `out_of_scope` を全行に持つ機械生成物で、常時 false positive になる。ただし**評価データの正解を `no_segment_match` → `out_of_scope` に書き換えるのは、コードに触れずに分母を操作する経路**であり、そこは塞いだままにする必要がある |
+| B25 | ⑧ T5 に**複数行の `except` / `pass`** の検出を追加 | 設計の例示は 1 行形式だが、Python では 2 行に分かれるのが通常の書き方であり、1 行形式しか見ないと実質何も検出できない |
+| B26 | ⑧ の検出パターンの末尾 1 文字を文字クラスにした（`[l]` `[e]` `[s]`） | 検出器のパターン定義が自分自身に一致し、ゲートが毎回自分を指摘して赤のままになる。文字クラス化しても対象文字列への一致は変わらず、検出力は落ちない |
+| B16 | golden-60 の「期間表記の全 5 種」を カタログ §4.2 の行に 1:1 で対応させた（`month` / `fiscal_period`（◯年◯月期）/ `quarter` / `half` / `fiscal_year`（◯◯年度）） | G1 は「月次 / 決算期 / 四半期 / 半期 / 年度」の 5 種としか書いておらず、判定パターンは定義されていない。**決算期と年度を 1 つに畳むと種類数が 4 になり、枠数 8 を割り振ったときに最多の「月次」が 0 件になって「全 5 種」を満たせない**。また `1~6月期`（半期）は `[0-9]{1,2}月期`（決算期）にも `[0-9]{1,2}~[0-9]{1,2}月`（四半期）にも一致するため、**狭いパターンから先に評価する**必要がある（順序を誤ると半期が構造的に 0 件になる。回帰テストあり） |
+| ~~B7~~ | **C11**（発表主体対応表への写像）を追加した | **決着済み（2026-08-02）。** PR #725 で C11 が設計原本に新設され、理由コード `authority_unmapped` も実装と一致した |
+| ~~B8~~ | **C12**（ローダ受理。C1〜C11 が全て通ったときだけローダを実行する）を追加した | **決着済み（2026-08-02）。** PR #725 で C12 が設計原本に新設された。原本は「C 番号を V 番号に 1:1 で増やす案は採らない（ローダ側に V14 以降が追加されるたび同じ乖離が再発する）」として、ローダ自身を通す方式を採用しており実装と一致。**理由コードは `loader_rejects` → `loader_rejected` に修正済み**（原本の表記に合わせた）。実装は `Catalog.validate()` ではなく `catalog.load()` を呼ぶが、`validate()` を呼ぶには結局 `load()` が要るため検査範囲は同じ |
+| B9 | `settings.json` に A 系統 hook（`capture-interaction.sh` / `quality-gate.sh` / `session-boundary.sh`）を書かなかった | ループ設計 §2.2 の JSON は cc-sier 側の既存 40 行への**追記**として示されたものであり、本リポジトリにこれらのスクリプトは存在しない。存在しないスクリプトを配線すると全ツール呼び出しで hook エラーが出る。`env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` も同様（§6「組織運営が使うため既存のまま残す」= 本リポジトリの関心事ではない） |
+| B10 | ⑦ `gate-coverage-regression.sh` を「配線だけ」の最小実装で置き、`runs.json` が**存在するのに S1〜S4 が未実装**なら `rs_block` するようにした | §2.2 の配線上の注意が、配線を先送りすると「発火しないゲートが仕様上は存在する」状態になると明示しているため段階 0 で置く。ただし判定できない状態を pass と報告するのは、本設計が最大の危険とする silent accumulation そのもの。よって「判定対象なし → exit 0 / 判定対象あり かつ 未実装 → block」とした。Stop 配下のため読み取り専用（`$RS_DATA_ROOT` に書かない）を厳守している |
+| B11 | `_common.sh` に `RS_CATALOG_SNAPSHOT` と `rs_is_catalog()` / `rs_relpath()` を追加した | D-A のカタログ解決順を hook 側にも反映するため。`config.py` の解決順と一致させること（片方だけ直すと hook が発火しなくなる） |
+
+### D-C. 設計書間の不整合（cc-sier 側へ報告済み・**決着済み**）
+
+| # | 箇所 | 内容 | 状態 |
+|---|---|---|---|
+| C-1 | `loop-engineering-design.md` §2.3 ② の **C4** | 業態表の必須列を「`segment_id`/`業態ID`, `名称`/`正式名称`, `別名`/`表記ゆれ`, `種別`, `表示順`」の 5 種としており、**`発表主体` が抜けていた**。要件 v0.1.1 で `発表主体` が必須列に昇格した際の追随漏れ（要件 §6 IF-02「業態定義表の必須列」表と、同 §9 差分表 #3「`発表主体` を必須列に追加」が正。実装設計 §3.1 段階 3 も「**`発表主体` は無視してはならない**」と明記）。放置すると natural key の第 5 要素を供給する列が欠けたカタログを段階 0 のゲートが通してしまう | **解決済み（2026-08-02）**。[Issue #724](https://github.com/SAS-Sasao/cc-sier-organization/issues/724) で報告 → [PR #725](https://github.com/SAS-Sasao/cc-sier-organization/pull/725) でマージ。C4 が 6 列に修正され、あわせて **C11 / C12 が新設**された |
+
+**C-1 の解決にあたって原本が示した判断**（本リポジトリの実装はこれに一致している）:
+
+- C4 は上位文書（要件 v0.1.1）を正として 6 列に修正。現行カタログ 13 業態はすべて `発表主体` を持つため、**カタログ側の改訂は発生しない**（検査の穴を塞ぐだけ）
+- C11（発表主体対応表への写像 / `authority_unmapped`）を新設
+- C12（C1〜C11 通過後にローダ自身を実行 / `loader_rejected`）を新設。**「C 番号を V 番号に 1:1 で増やす案は採らない」**——ローダ側に V14 以降が追加されるたび同じ乖離が再発し、追随漏れが構造的に起きるため（C4 欠落がまさにその形で発生した）。代わりにローダ自身を通すことで包含関係をコードの重複なしに保証する
+- C1〜C11 を先に評価する理由も明記された。ローダは最初の `CatalogError` で停止するため、列欠落のような自明な不備があると理由コードが 1 件しか得られない。C1〜C11 は独立に全件評価できるので、編集者に一度で全ての不備を返せる
+
+**スナップショットへの反映**: `docs/design/loop-engineering-design.md` を PR #725 マージ後の原本（コミット `6a9843c`）から取り込み済み。取り込み時は初回コピーと同じ 5 文書間の相互参照ファイル名の機械的置換のみを適用し、それ以外の本文は変更していない。他の 4 文書は原本と内容差分なし（差分はすべて初回コピー時の意図的なファイル名置換）。
+
+**実装側の追随**: 理由コードを `loader_rejects` → `loader_rejected` に修正した。それ以外の実装変更は不要だった（暫定判断がすべて原本の判断と一致していたため）。
+
+### D-D. 段階 0 の完了条件のうち、本リポジトリでは確認できないもの
+
+| 完了条件 | 状態 |
+|---|---|
+| (a) 現行カタログが C1〜C10 を全て pass する | **達成**（C1〜C12 で pass。`python3 scripts/retail-stats-tracker/validate_catalog.py`） |
+| (b) golden-60 の期待値が人手で確定し、末尾 3 区分 14 件を含む | **未着手・本リポジトリでは不可能**。`.companies/{org}/docs/daily-digest/` の実データ（102 ファイル / 595 行）が必要。cc-sier 側、または `RETAIL_STATS_WORKSPACE` で作業コピーを指した状態で行う |
+| (c) ダイジェストへの書き込みが実際に拒否されることを確認 | **hook 単体では確認済み**（`agent_type=retail-stats-qa` + `$RS_DIGEST_DIR` 配下のパスで `permissionDecision: "deny"` を返すことを検証）。ただし `$RS_DIGEST_DIR` が実在する状態での end-to-end 確認は cc-sier 側で行う必要がある |
+
+### D-E. ネクストアクション（2026-08-02 時点）
+
+**完了**: M1（`config` / `textnorm` / `digest` / `cli --dry-run`）/ M2（カタログローダ）/
+段階 0 の hooks（① ② ⑦配線）/ **段階 1 の hooks と Skill（③ ⑧ / `/retail-stats-verify` /
+`/retail-stats-rules`）** / ダイジェストフィクスチャ / golden-60 の候補選定とレビューシート。
+
+検証: `verify.sh --ci` → `RESULT gates=7 pass=4 fail=0 skip=3` / unittest 120 件 OK。
+
+**次に着手するのはここ**:
+
+| 順 | やること | 誰が |
+|---|---|---|
+| **1** | **G-2 / G-4 / G-1 の判断**（下記 N-1a の推奨を読んで決める） | **オーナー** |
+| 2 | golden-60 の `expected` を 60 行埋め、`golden-60.jsonl` として凍結 | オーナー（実装側は補助のみ） |
+| 3 | M3（`period.py` / `parser.py` / `report.py` / `cli measure`）に着手 | 実装 |
+
+**2 が終わるまで M3 に着手しない。** 規律 G1 が「パーサのコードを 1 行も書く前に完了させる」と
+定めており、段階 0 の完了条件 (b) でもある。評価データが無いまま M3 に入ると、判断分岐点
+（NFR-04 / NFR-05 の達成可否）を測る物差しが無いままパーサだけが太る。
+
+#### N-1. 実データが無いと進めないもの（**2026-08-02: N-1b/c/d 完了、N-1a はオーナー確定待ち**）
+
+`.companies/{org}/docs/daily-digest/` の実データ（102 ファイル / 595 行）が必要。cc-sier 側で
+実行するか、本リポジトリで `RETAIL_STATS_WORKSPACE=/path/to/cc-sier-organization` を指す。
+
+| # | 内容 | 根拠 | 状態 |
+|---|---|---|---|
+| N-1b | **M1 の残り**（`textnorm.py` / `digest.py` / `cli.py` の `build --dry-run`） | 実装設計 §8 M1 | **完了**。設計の実測値を完全再現（102 / 93 / 89 / 595 / 595、一意 406、ヘッダ 1 種、章が無い 9 日も設計の列挙と一致） |
+| N-1c | **`tests/fixtures/digests/` の生成**（`make_fixtures.py`） | 実装設計 §7.3 | **完了**。12 日分。`s041442` の非連続 6 日・4 variant を再現（T-1 の前提） |
+| N-1d | 段階 0 完了条件 (c) の **end-to-end 確認** | 段階 0 完了条件 (c) | **完了**。実在する digest への書き込みが `permissionDecision: deny` を返し、メインセッションは素通し、入力の sha256 が不変であることを確認 |
+| N-1a | **golden-60 の凍結**。期待値を人手で確定し、末尾 3 区分 14 件を含める | 段階 0 完了条件 (b)。§3.3 規律 G1 | **候補選定まで完了・期待値はオーナー確定待ち**。下記 |
+
+**N-1a の現状**: `tests/make_golden60.py` が G1 の選定基準表どおり 8 区分・合計 60 件を
+機械的に選び、`tests/fixtures/golden-60.candidates.jsonl` に出力する（再実行でバイト一致）。
+**期待値は意図的に空**（`expected: null` / `status: "needs_human_review"`）である。G1 は
+選定を「機械的に決める」、期待値を「人手で確定」と明確に分けており、期待値を機械が
+推測して埋めると「実装に引きずられた期待値」になって評価が成立しないため。
+オーナーが `expected` を埋め `status` を `confirmed` にして `golden-60.jsonl` として凍結する。
+
+凍結前に**オーナー判断が要る 3 点**と、実装側の推奨。**推奨であって決定ではない。**
+G1 は期待値の確定を人手に限定しており、ここを機械の判断で埋めると評価が成立しない。
+
+---
+
+**G-2（最重要）: ランキング記事を NFR-05 の分母から外すか**（未決事項 (c)）
+
+> **推奨: `out_of_scope`（分母から外す）。ただし「NFR-05 の数値が改善するから」を理由にしないこと。**
+
+要件 v0.1.1 の out_of_scope の定義は「個社決算・個社月次の記事、および**小売月次統計でない
+一般記事**」である。`コンビニ決算ランキング2026 ファミマとローソンの好調際立つ` は年次決算の
+編集記事であって月次統計ではないので、**v0.1.1 の定義のまま素直に out_of_scope に該当する**。
+要件改訂は不要で、判定木の緩和にもあたらない。
+
+判断を分けるのは「月次統計の記事か」であって「値が取れるか」ではない。
+`ホームセンター月次実績＝2026年6月度` は月次実績の掲載そのもの（タイトルに値が無いだけ）なので
+**分母に残して `no_numeric`** が正しい。この 2 つを混同すると、⑧ T3 が守っている境界が崩れる。
+
+**注意**: 未決事項 (c) は「NFR-05 を 80% に届かせる 3 つの施策のうちの 1 つ」として提示されている。
+数値目的で決めると、⑧ T3 と ⑦ S4 が防ごうとしている分母操作を、正規の手続きで通すことになる。
+**定義の問題として先に決め、その結果として数値がどう動いたかは事後に報告する**順序を推奨する。
+
+---
+
+**G-4: 分母の帰属が未定義のマクロ統計行**
+
+> **推奨: 「日本国内の小売・外食の販売動向を示す統計か」を唯一の線引きにする。**
+
+| 対象 | 推奨 | 理由 |
+|---|---|---|
+| 海外マクロ（米 GDP / ユーロ圏 GDP / 米 CPI 等） | `out_of_scope` | 本システムの目的は**日本の業態トレンド比較**（要件 7-4）。海外指標は業態別系列と並べる対象ではない |
+| 地域別 CPI（`4月都内物価…総務省`） | `no_segment_match` | 要件 制約 15 が**明示的に「真の取りこぼし」として例示している**。カタログに地域別 CPI の segment を追加するかは小売ドメイン室の判断 |
+| 国内の需要側マクロ（消費支出＝家計調査 / 消費者態度指数） | `no_segment_match` | 日本の小売需要を示す政府統計であり、カタログに `cpi`（総務省）という前例がある。**取りこぼしとして分母に残す**のが誠実。カタログ追加の可否は別途 |
+| 農林水産物輸出額 | `out_of_scope` | 小売店頭の販売動向ではない（貿易統計）。ただし判断が割れうるので、割れたら小売ドメイン室に寄せる |
+
+海外マクロを out_of_scope、国内マクロを no_segment_match に分けると、**分母は減らず増える方向**に
+働く。G-2 と逆方向であり、両方を同時に決めることで「都合のいい方だけ採用した」形を避けられる。
+
+---
+
+**G-1: 区分①の補充 6 件（全店系）でよいか**
+
+> **推奨: このまま 12（既存店）+ 6（全店系）で凍結する。母集団は広げない。**
+
+G1 の母集団は「決算・統計章の 595 行（**計測日 2026-07-26**）」と明示されている。窓を広げると
+設計が実測した他の数値（一意 406 件 / NFR-05 の 64/83 など）と母集団が食い違い、比較できなくなる。
+
+補充 6 件は主要 4 業態の月次統計で値もあるため、**業態解決・期間解決・発表主体解決の評価には
+そのまま使える**（無駄にならない）。個社決算は混ざっていない。
+
+ただし**記録しておくこと**: golden-60 単体では NFR-04（主要 4 業態で 90%）を判定できない。
+既存店指標の行が 12 件しか無いためで、NFR-04 の判定は `measure` の全件集計で行う。
+golden-60 は回帰用のフィクスチャであって NFR-04 の測定器ではない。
+
+---
+
+**G-5 は取り下げ（オーナー判断は不要）**
+
+「G1 の表記ゆれ 4 要素のうち全角数字が母集団に 0 件」は、**実装設計 §4.2 が既に記録済み**だった
+（「決算・統計章のタイトルでは 0 件。防御的措置として残すが、現行データでは発火しない」。
+§7.2 T-3 の `("６月", "6月")` にも「現行データでは未出現」と注記がある）。
+正規化は防御的措置として維持し、区分④に全角数字の行を求めない。新規の論点ではない。
+
+#### N-2. 実装判断が要るもの
+
+| # | 内容 | 状態 |
+|---|---|---|
+| N-2a | **別名索引の正規化方針**（M3 の前提）。`Catalog` の別名索引はカタログ原文のまま保持しており（`チェーンストア（総合小売含む）` のように全角括弧を含む）、`parser.py` は `textnorm.normalize()`（NFKC）を通した文字列で照合するため構造的に一致しない。照合直前に別名側も正規化するか、索引構築時に正規化するかを決める。**実装設計 §3.2 / §4.2 のどちらにも記述がない** | 未決。M3 着手前に決め、D-B に記録して cc-sier に報告する |
+| N-2b | **B6（C9 の enum 検査に `種別` / `表示順` を追加）を cc-sier に戻すか**。C4 / C11 / C12 が原本に反映された今、これが唯一残る「設計に無い判断」 | 未報告。C-1 と同じ形（issue）で報告するかを判断する |
+| N-2c | `cli.py` の `--dry-run` 出力に `config.resolved_inputs()` を必ず含める（D-A の「どの入力を読んだか分からないまま処理が進むことを許さない」の実装面） | N-1b と同時に実装する |
+
+#### N-3. 検証 hooks / Skill の導入状況
+
+**2026-08-02: 段階 1 の導入物は完了。** M3（パーサ）着手前に検証信号を先に立てた。
+⑧ を最初期に置くのは意図的で（§2.4）、後から入れるとそれまでに緩められた閾値が
+「既存行」として免責されるためである。
+
+| # | 内容 | 段階 | 状態 |
+|---|---|---|---|
+| N-3a | ③ `verify-parser-tests.sh` / ⑧ `gate-signal-tampering.sh`（T1〜T7）/ `/retail-stats-verify`（`scripts/verify.sh`）/ `/retail-stats-rules` | 1 | **完了**。`verify.sh --ci` が `RESULT gates=7 pass=4 fail=0 skip=3` を返す |
+| N-3b | ④ `gate-dataset-integrity.sh` / ⑤ `gate-idempotency.sh`（**Stop では読み取り専用**、破壊的な R1/R2 は `--full` に限定）/ `/retail-stats-build` | 2 | 未導入（`verify.sh` は skip として計上） |
+| N-3c | ⑦ `gate-coverage-regression.sh` の **実効化**（S1〜S4）。現在は配線のみのスタブ（D-B B10） | 2 | 未導入 |
+| N-3d | ⑥ `gate-html-selfcontained.sh` | 3 | 未導入 |
+| N-3e | `/retail-stats-triage` / `permanently_unresolvable` マーク | 6 | 未導入 |
+
+**§2.7 の CI 契約** (a) 標準入力が空でも動作 / (d) `RS_CI=1` で `rs_stop_guard` を無効化
+は設計に書かれていたが未実装だったため、`_common.sh` に実装した。(a) が無いと
+`json.load` が空入力で例外を投げ、`set -e` でスクリプトごと死ぬ。
+
+**既知の限界**: ⑧ の T1〜T5 は `git diff -U0 HEAD` を見るため、**未コミットの新規ファイル
+（untracked）は走査対象外**である。設計 §2.3 ⑧ の手順 2 がそう定めているためそのままに
+したが、新規に追加した hook や実装ファイルは commit 後に初めて検査対象になる。
+
+#### N-4. オーナー判断待ち（実装では解決できない）
+
+本書「未決事項」節のとおり。**NFR-05 未達（64/83 = 77.1%）** と **U10（複数主体併記）** は
+M3 の判断分岐点に直結する。ループ設計 §7.1 の U3（LLM 抽出の実行主体）は段階 4 着手前まで。
+
+#### N-5. 設計同期
+
+`loop-engineering-design.md` は 2026-08-02 に `6a9843c` へ同期済み（同期履歴の節を参照）。
+以後も cc-sier 側で設計が動きうるため、マイルストーンの区切りごとに「同期の確認方法」の
+コマンドを 5 文書に対して実行すること。
 
 ## 更新ルール
 
