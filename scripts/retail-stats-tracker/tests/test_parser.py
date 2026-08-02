@@ -225,8 +225,12 @@ class TestMultiValueRows(unittest.TestCase):
     現れない状態は、いかなる理由があっても許容しない。
     """
 
-    def test_company_enumeration_becomes_out_of_scope(self):
-        """(a) 個社の並記 → 行全体を out_of_scope。1 件目も業態の観測値ではない。
+    def test_company_enumeration_becomes_company_disclosure(self):
+        """(a) 個社の並記 → 行全体を company_disclosure。1 件目も業態の観測値ではない。
+
+        要件 v0.1.2 で `out_of_scope`（業態が解決できなかった行）とは別コードに
+        なった。**業態は解決できているが値の主語が個社**という状態を区別する。
+        どちらも NFR-05 の分母からは外れる。
 
         `ツルハ` は指標別名・業態別名・期間表現のいずれでもない残余語であり、
         値の主語が個社であることを示す。カタログ §1.4 が「個社決算は
@@ -240,7 +244,7 @@ class TestMultiValueRows(unittest.TestCase):
             with self.subTest(title=title):
                 r = run(title, pub)
                 self.assertEqual(r.observations, (), "個社の値が業態の観測値になっている")
-                self.assertEqual(r.unresolved[0].reason_code, "out_of_scope")
+                self.assertEqual(r.unresolved[0].reason_code, "company_disclosure")
 
     def test_segment_internal_breakdown_keeps_the_first_value(self):
         """(b) 業態内の内訳 → 1 件目は正当な観測値、2 件目は退避する。
@@ -315,21 +319,29 @@ class TestValueTypeConsistency(unittest.TestCase):
             with self.subTest(metric=o.metric_id):
                 self.assertNotEqual(o.unit, "percent_yoy")
 
-    def test_plain_sales_amount_with_percentage_is_unresolvable_today(self):
-        """**カタログ課題の回帰テスト**（origin.md D-E の C-2）。
+    def test_plain_sales_amount_with_percentage_resolves_to_the_ratio_metric(self):
+        """**C-2 の決着後**（cc-sier #729 / 要件 v0.1.2）。
 
-        `売上高` はカタログ上 `sales-amount-absolute`（絶対額）の別名にしか無く、
-        `all-store-sales-yoy`（率）には無い。V12 が別名の重複を禁じているため
-        両方に持たせることもできない。結果として `売上高N％増` は率の指標に
-        解決できず no_metric_match に落ちる（実データで 7 行）。
+        V12 が「値種別が異なれば同一別名を許す」に緩和され、カタログ §2.1 の
+        `all-store-sales-yoy` に別名 `売上高` が追加された。これにより
+        `売上高N％増`（率）は率の指標に、`売上高N億円`（絶対額）は
+        `sales-amount-absolute` に、**値の型で**振り分けられる。
 
-        **コードで回避しない。** 業態名・指標名の判断をコードに書くことは
-        FR-03 / NFR-09 が禁じており、これはカタログ側で解くべき問題である。
-        解決したらこのテストは失敗するので、そのとき期待値を書き換えること。
+        この期待値は「カタログ課題が解決したら失敗する」テストとして書いてあり、
+        実際に設計原本の更新で発火して書き換えた（意図どおりの回帰検出）。
         """
         r = run("日本百貨店協会／3月の売上高3.2％増", "2026-04-28")
-        self.assertEqual(r.observations, ())
-        self.assertEqual(r.unresolved[0].reason_code, "no_metric_match")
+        self.assertEqual(
+            [(o.metric_id, o.scope, o.value) for o in r.observations],
+            [("all-store-sales-yoy", "all_store", 3.2)],
+        )
+
+    def test_plain_sales_amount_with_yen_resolves_to_the_absolute_metric(self):
+        """同じ別名でも金額なら絶対額の指標に振り分ける（V12 緩和の裏返し）。"""
+        r = run("カスミ／3月の総売上高243億円", "2026-04-17")
+        for o in r.observations:
+            with self.subTest(metric=o.metric_id):
+                self.assertEqual(o.unit, "jpy_oku")
 
 
 class TestJpyConversion(unittest.TestCase):
