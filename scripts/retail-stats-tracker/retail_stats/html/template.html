@@ -1,32 +1,83 @@
-<!--
-  骨格テンプレート（プレースホルダのみ）。実装設計 §6 / §8 M6 で実装する。
-
-  html/build.py の render() がこのファイルに series.json（JSON）、
-  app.js、styles.css、vendor/chart.umd.min.js をインライン埋め込みして
-  docs/retail-stats/index.html を生成する。
-
-  必須プレースホルダ（実装時に置換ロジックを実装する）:
-    {{STYLES}}       ← styles.css の内容を <style> に埋め込む
-    {{SERIES_JSON}}  ← series.json を <script type="application/json"> に埋め込む
-    {{VENDOR_JS}}    ← vendor/chart.umd.min.js の内容を <script> に埋め込む
-    {{APP_JS}}        ← app.js の内容を <script> に埋め込む
-
-  禁則（NFR-08）: 埋め込み後の HTML に src="http" / fetch( / import( を
-  含めないこと。`</script>` 脱出が起きないよう埋め込み時にエスケープすること
-  （実装設計 §7.1 html/build のテスト方針）。
--->
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8">
-  <title>小売月次統計トラッカー</title>
-  <style>{{STYLES}}</style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>小売月次統計トラッカー</title>
+<style>__STYLES__</style>
 </head>
 <body>
-  <!-- SC-01〜SC-06 の描画領域。詳細は implementation-design.md §6 を参照 -->
-  <div id="app"></div>
-  <script type="application/json" id="series-data">{{SERIES_JSON}}</script>
-  <script>{{VENDOR_JS}}</script>
-  <script>{{APP_JS}}</script>
+<header>
+  <h1>小売月次統計トラッカー</h1>
+  <p class="meta" id="meta"></p>
+</header>
+
+<nav class="tabs" id="tabs"></nav>
+
+<!-- SC-01 概観ダッシュボード -->
+<section id="sc01" class="view">
+  <h2>概観</h2>
+  <div id="highlights" class="highlights"></div>
+  <div id="cards" class="cards"></div>
+</section>
+
+<!-- SC-02 業態別トレンド -->
+<section id="sc02" class="view" hidden>
+  <h2>業態別トレンド</h2>
+  <div class="controls">
+    <label>業態 <select id="sc02-segment"></select></label>
+    <label>指標 <select id="sc02-metric"></select></label>
+    <label>発表主体 <select id="sc02-authority"></select></label>
+  </div>
+  <p class="notice" id="sc02-notice" hidden></p>
+  <p class="subtitle" id="sc02-subtitle"></p>
+  <div class="chartbox"><canvas id="sc02-chart"></canvas></div>
+  <p class="empty" id="sc02-empty" hidden>この組み合わせのデータはありません。</p>
+</section>
+
+<!-- SC-03 指標横断比較 -->
+<section id="sc03" class="view" hidden>
+  <h2>指標横断比較</h2>
+  <div class="controls">
+    <label>指標 <select id="sc03-metric"></select></label>
+    <label>発表主体 <select id="sc03-authority"></select></label>
+    <label class="check"><input type="checkbox" id="sc03-include-macro"> 小売業全体を含める（単独表示）</label>
+  </div>
+  <p class="notice">
+    集計粒度と発表主体が揃った業態のみを並べます。粒度が 1 段違う「小売業全体」は既定で除外します（FR-16）。
+  </p>
+  <p class="subtitle" id="sc03-subtitle"></p>
+  <div class="chartbox"><canvas id="sc03-chart"></canvas></div>
+  <p class="empty" id="sc03-empty" hidden>この発表主体で比較できる業態がありません。</p>
+</section>
+
+<!-- SC-04 データテーブル -->
+<section id="sc04" class="view" hidden>
+  <h2>データテーブル</h2>
+  <p><button id="csv">CSV を保存</button></p>
+  <div class="tablebox"><table id="table"></table></div>
+</section>
+
+<!-- SC-05 出典一覧 -->
+<section id="sc05" class="view" hidden>
+  <h2>出典一覧</h2>
+  <div class="tablebox"><table id="sources"></table></div>
+</section>
+
+<!-- SC-06 データ品質（P1 / P2 / P3 の 3 分割） -->
+<section id="sc06" class="view" hidden>
+  <h2>データ品質</h2>
+  <div id="p1" class="panel"></div>
+  <div id="p2" class="panel"></div>
+  <div id="p3" class="panel"></div>
+</section>
+
+<footer>
+  <p>出典は各記事の配信元に帰属します。チャート描画に Chart.js（MIT License）を同梱しています。</p>
+</footer>
+
+<script>window.__SERIES__ = __SERIES_JSON__;</script>
+<script>__CHARTJS__</script>
+<script>__APP__</script>
 </body>
 </html>
