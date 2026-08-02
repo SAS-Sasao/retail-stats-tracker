@@ -297,17 +297,63 @@ def cmd_build(args: argparse.Namespace) -> int:
         print(f"書き出しに失敗しました: {exc}", file=sys.stderr)
         return EXIT_IO_ERROR
 
+    # --- 配信 JSON + 単一 HTML（M6 / FR-13 / FR-14）------------------------
+    from retail_stats import report
+    from retail_stats.html import build as html_build
+
+    meta = {
+        "generated_from_digest_max_date": max(
+            (r.digest_date for r in results if r.digest_date), default=""),
+        "digest_files_scanned": len(results),
+        "digest_files_with_section": sum(1 for r in results if r.has_section),
+        "observation_count": len(observations),
+        "unresolved_count": len(unresolved),
+        "catalog_sha256": cat.source_sha256,
+    }
+    series = report.build_series(
+        list(observations.values()), list(articles.values()),
+        list(unresolved.values()), cat, meta,
+    )
+    store.write_json(data_dir / "series.json", series)
+
+    html_path = config.html_output_path()
+    try:
+        html_build.build(series, html_path)
+    except html_build.SelfContainedError as exc:
+        # 自己完結でない成果物は配信しない（NFR-08）。既存 HTML も壊さない
+        print(f"HTML の自己完結性検査に失敗しました:\n{exc}", file=sys.stderr)
+        return EXIT_DATA_ERROR
+
     print(f"\n書き出しました: {data_dir}")
     for name in config.IDEMPOTENT_FILES:
         path = data_dir / name
         if path.is_file():
             print(f"  {name:<24} {path.stat().st_size:>8,} bytes")
+    print(f"\n配信 HTML: {html_path}  ({html_path.stat().st_size:,} bytes / 上限 2 MB)")
+    print(f"  公開 URL: {config.PUBLIC_SITE_URL}")
     return EXIT_OK
 
 
 def cmd_html(args: argparse.Namespace) -> int:
     """html サブコマンド。series.json は変更せず HTML のみ再生成する（M6）。"""
-    raise NotImplementedError("実装設計 §8 M6 で実装する")
+    from retail_stats.html import build as html_build
+
+    _print_resolved_inputs(args.org)
+    series_path = config.data_dir(args.org) / "series.json"
+    if not series_path.is_file():
+        print(f"series.json がありません: {series_path}\n"
+              f"  → 先に `build` を実行してください", file=sys.stderr)
+        return EXIT_IO_ERROR
+    series = json.loads(series_path.read_text(encoding="utf-8"))
+    html_path = config.html_output_path()
+    try:
+        html_build.build(series, html_path)
+    except html_build.SelfContainedError as exc:
+        print(f"HTML の自己完結性検査に失敗しました:\n{exc}", file=sys.stderr)
+        return EXIT_DATA_ERROR
+    print(f"\n配信 HTML: {html_path}  ({html_path.stat().st_size:,} bytes)")
+    print(f"  公開 URL: {config.PUBLIC_SITE_URL}")
+    return EXIT_OK
 
 
 def cmd_measure(args: argparse.Namespace) -> int:

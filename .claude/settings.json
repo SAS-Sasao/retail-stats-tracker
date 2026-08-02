@@ -45,6 +45,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "bash .claude/hooks/verify/retail-stats/gate-html-selfcontained.sh",
+            "timeout": 60,
+            "statusMessage": "HTML 自己完結性ゲート..."
+          },
+          {
+            "type": "command",
             "command": "bash .claude/hooks/verify/retail-stats/gate-coverage-regression.sh",
             "timeout": 30,
             "statusMessage": "カバレッジ回帰ゲート..."

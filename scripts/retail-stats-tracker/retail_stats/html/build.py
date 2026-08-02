@@ -36,34 +36,76 @@ out_of_scope_breakdown を独立表示し、未解決件数（reason_code 側）
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 
+HERE = Path(__file__).resolve().parent
 
-def build_chart_spec(series: list) -> object:
-    """複数系列からチャート仕様を組み立てる。R1 / R6 の禁則違反時は
-    `renderable=False` とし `error_message` に理由を入れて描画しない。
+# NFR-08: 生成 HTML に含めてはならないパターン（テスト T-10g）。
+# 外部リソースを取りに行く経路をひとつも残さない。
+FORBIDDEN = (
+    re.compile(r'src\s*=\s*["\']https?:'),
+    re.compile(r"\bfetch\s*\("),
+    re.compile(r"\bimport\s*\("),
+    re.compile(r'<link[^>]+href\s*=\s*["\']https?:'),
+    re.compile(r"@import\s"),
+)
+MAX_BYTES = 2 * 1024 * 1024   # 2 MB（実装設計 §8 M6 の完了条件）
+
+
+class SelfContainedError(Exception):
+    """生成物が自己完結していない / サイズ超過のときに送出する（NFR-08）。"""
+
+
+def _asset(name: str) -> str:
+    return (HERE / name).read_text(encoding="utf-8")
+
+
+def check_self_contained(html: str) -> None:
+    """外部参照とサイズを検査する。**書き出す前**に呼ぶ。
+
+    `a[href]` の外部 URL は**残す**。出典リンクは FR-19 が要求する機能であり、
+    ここで消すと検査が要件を殺す（ループ設計 §6 段階 3 の完了条件 (c)）。
+    禁じているのは「ページが自分でネットワークを取りに行く」経路のみ。
     """
-    raise NotImplementedError
+    problems = []
+    for pattern in FORBIDDEN:
+        for m in pattern.finditer(html):
+            problems.append(f"外部参照または動的読み込み: {m.group(0)!r}（位置 {m.start()}）")
+    size = len(html.encode("utf-8"))
+    if size > MAX_BYTES:
+        problems.append(f"サイズ超過: {size:,} bytes > {MAX_BYTES:,} bytes")
+    if problems:
+        raise SelfContainedError(
+            f"自己完結性の検査に失敗しました（{len(problems)} 件）:\n  - " + "\n  - ".join(problems)
+        )
 
 
-def build_default_segment_candidates(catalog) -> list:
-    """業態横並び表示の既定候補を返す。`meti-commerce-dynamics` は
-    集計粒度が異なるため既定候補から除外する（R6。
-    implementation-design.md §7.2 T-9
-    test_meti_commerce_dynamics_excluded_from_default_segments）。
+def render(series: dict) -> str:
+    """series.json（dict）から単一 HTML の文字列を作る（FR-13 / FR-14）。
+
+    JSON / JS / CSS / Chart.js を全てインラインに埋め込む。
+    `</script>` はスクリプト文脈を壊すのでエスケープする。
     """
-    raise NotImplementedError
+    payload = json.dumps(series, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    payload = payload.replace("</", "<\\/")      # </script> でスクリプトを閉じさせない
+    html = _asset("template.html")
+    html = html.replace("__STYLES__", _asset("styles.css"))
+    html = html.replace("__SERIES_JSON__", payload)
+    html = html.replace("__CHARTJS__", _asset("vendor/chart.umd.min.js"))
+    html = html.replace("__APP__", _asset("app.js"))
+    check_self_contained(html)
+    return html
 
 
-def build_series_json(observations, articles, quality: dict) -> dict:
-    """observations.json 等から配信用 series.json を組み立てる（実装設計 §6.1）。"""
-    raise NotImplementedError
-
-
-def render(series_json: dict, template_path: Path, out_path: Path) -> None:
-    """template.html + app.js + styles.css + vendor/chart.umd.min.js を
-    インライン埋め込みし、単一 HTML として out_path に書き出す。
-
-    一時ファイル + os.replace() でアトミックに書き出すこと（NFR-12）。
-    """
-    raise NotImplementedError
+def build(series: dict, out_path: Path) -> Path:
+    """単一 HTML を書き出す。アトミック置換で、失敗時に既存を壊さない（NFR-12）。"""
+    out_path = Path(out_path)
+    html = render(series)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out_path.with_suffix(out_path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(html)
+    tmp.replace(out_path)
+    return out_path
