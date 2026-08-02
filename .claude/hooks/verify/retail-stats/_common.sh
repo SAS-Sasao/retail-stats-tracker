@@ -32,24 +32,37 @@ if [[ -z "$RS_REPO_ROOT" ]]; then
   RS_REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 fi
 
-# stdin の hook イベント JSON を 1 度だけ読み、以後は $RS_INPUT を使う
+# stdin の hook イベント JSON を 1 度だけ読み、以後は $RS_INPUT を使う。
+# **標準入力が空でも動作する**こと（§2.7 契約 (a)：CI からの直接実行）。
+# 空のまま rs_json に渡すと json.load が例外で落ち、set -e でスクリプトごと
+# 死ぬため、ここで必ず妥当な JSON にしておく。
 rs_read_stdin() {
-  RS_INPUT=$(cat)
+  if [[ -t 0 ]]; then
+    RS_INPUT="{}"          # 端末から直接起動された（CI / 手動実行）
+  else
+    RS_INPUT=$(cat)
+  fi
+  [[ -z "${RS_INPUT// }" ]] && RS_INPUT="{}"
   export RS_INPUT
 }
 
-# JSON から dot path で値を取り出す（jq 非依存。python3 は既存 hooks も前提にしている）
+# JSON から dot path で値を取り出す（jq 非依存。python3 は既存 hooks も前提にしている）。
+# 不正な JSON でも空文字を返す（検査結果の握り潰しではなく、入力の欠如の扱い。
+# 検査本体では一切使わない）。
 rs_json() {
   python3 -c '
 import sys, json
-d = json.load(sys.stdin)
+try:
+    d = json.loads(sys.argv[2] or "{}")
+except (ValueError, IndexError):
+    d = {}
 for k in sys.argv[1].split("."):
     if isinstance(d, dict):
         d = d.get(k, "")
     else:
         d = ""
 print(d if isinstance(d, str) else json.dumps(d, ensure_ascii=False))
-' "$1" <<<"$RS_INPUT"
+' "$1" "$RS_INPUT"
 }
 
 # 編集対象のファイルパス（Write / Edit / NotebookEdit 共通）
@@ -102,9 +115,12 @@ rs_is_catalog() {
   [[ "$p" == "$RS_CATALOG" || "$p" == "$RS_CATALOG_SNAPSHOT" ]]
 }
 
-# Stop hook の再入ガード。session_id ごとに実行回数を数える（理由は §2.6）
+# Stop hook の再入ガード。session_id ごとに実行回数を数える（理由は §2.6）。
+# RS_CI=1 のときは無効化して必ず全検査を実行する（§2.7 契約 (d)）。
+# CI で「2 回目以降は素通し」が効くと、検査していないのに緑になる。
 rs_stop_guard() {
   local sid limit=2 n
+  [[ "${RS_CI:-}" == "1" ]] && return 0
   # 従: すでに stop hook 起因で継続中なら再検査しない（§2.6）
   [[ "$(rs_json "stop_hook_active")" == "true" ]] && return 1
   sid=$(rs_json "session_id"); [[ -z "$sid" ]] && sid="unknown"

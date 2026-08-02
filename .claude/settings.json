@@ -3,7 +3,8 @@
     "allow": [
       "Bash(python3 -m unittest *)",
       "Bash(python3 -m retail_stats *)",
-      "Bash(python3 scripts/retail-stats-tracker/validate_catalog.py *)"
+      "Bash(python3 scripts/retail-stats-tracker/validate_catalog.py *)",
+      "Bash(bash .claude/skills/retail-stats-verify/scripts/verify.sh *)"
     ]
   },
   "hooks": {
@@ -29,6 +30,12 @@
             "command": "bash .claude/hooks/verify/retail-stats/verify-catalog-contract.sh",
             "timeout": 30,
             "statusMessage": "カタログ IF-02 契約を検査中..."
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/verify/retail-stats/verify-parser-tests.sh",
+            "timeout": 60,
+            "statusMessage": "パーサのテストを実行中..."
           }
         ]
       }
@@ -41,6 +48,12 @@
             "command": "bash .claude/hooks/verify/retail-stats/gate-coverage-regression.sh",
             "timeout": 30,
             "statusMessage": "カバレッジ回帰ゲート..."
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/verify/retail-stats/gate-signal-tampering.sh",
+            "timeout": 30,
+            "statusMessage": "検証信号の改変を検査中..."
           }
         ]
       }
