@@ -229,16 +229,79 @@ def cmd_build(args: argparse.Namespace) -> int:
         return EXIT_IO_ERROR
     _print_scan_summary(results)
 
-    if not args.dry_run:
-        print(
-            "\nパース・永続化は未実装です（実装設計 §8 の M3 / M4）。"
-            "\n  → 現時点で書き出せる成果物が無いため、既存データを空で上書きしないよう停止します（NFR-12）。"
-            "\n  → 走査結果の確認には --dry-run を使ってください。",
-            file=sys.stderr,
-        )
-        return EXIT_DATA_ERROR
+    # --- パース（M3）→ 永続化（M4）--------------------------------------
+    from retail_stats import parser as parser_mod
+    from retail_stats import store, textnorm
 
-    print("\n--dry-run のためファイルは書き出していません。")
+    rows = [row for r in results for row in r.rows]
+    by_url: dict[str, list] = {}
+    for row in rows:
+        by_url.setdefault(row.url, []).append(row)
+
+    observations: dict = {}
+    articles: dict = {}
+    unresolved: dict = {}
+    actions = Counter()
+    for url in sorted(by_url):
+        group = sorted(by_url[url], key=lambda r: r.digest_date)
+        for row in group:
+            store.merge_article(articles, url, row.title, row.source_name, row.digest_date)
+        # 抽出は**代表 variant 1 つ**に対して行う（§4.7）。掲載日は初出日を使い、
+        # 実行時刻も走査順も持ち込まない（NFR-06）。
+        representative = max(
+            group,
+            key=lambda r: (
+                len(_NUM_RE.findall(textnorm.normalize(r.title))), len(r.title), r.title
+            ),
+        )
+        aid = store.article_id(url)
+        first_seen = min(r.digest_date for r in group)
+        target = type(representative)(
+            digest_date=first_seen, row_index=representative.row_index,
+            title=representative.title, url=url, source_name=representative.source_name,
+            summary=representative.summary, raw_line=representative.raw_line,
+        )
+        result = parser_mod.parse_row(target, cat, aid)
+        for obs in result.observations:
+            actions[store.upsert(observations, obs).action] += 1
+        for row in result.unresolved:
+            store.merge_unresolved(unresolved, row, aid)
+
+    manifest = {
+        str(p.name): {
+            "sha256": hashlib.sha256(p.read_bytes()).hexdigest(),
+            "mtime_date": digest.date_from_filename(p),
+            "row_count": len(r.rows),
+        }
+        for p, r in zip(digest.iter_digest_files(digest_dir, since=args.since), results)
+    }
+
+    print()
+    print("パース結果")
+    print(f"  observations : {len(observations)}  {dict(actions)}")
+    print(f"  articles     : {len(articles)}")
+    print(f"  unresolved   : {len(unresolved)}")
+
+    if args.dry_run:
+        print("\n--dry-run のためファイルは書き出していません。")
+        return EXIT_OK
+
+    data_dir = config.data_dir(args.org)
+    try:
+        store.write_all(data_dir, observations, articles, unresolved, manifest, cat)
+    except store.IntegrityError as exc:
+        # 書き出し前に停止する。壊れた成果物を残さない（NFR-12）
+        print(f"参照整合性の検査に失敗しました:\n{exc}", file=sys.stderr)
+        return EXIT_DATA_ERROR
+    except OSError as exc:
+        print(f"書き出しに失敗しました: {exc}", file=sys.stderr)
+        return EXIT_IO_ERROR
+
+    print(f"\n書き出しました: {data_dir}")
+    for name in config.IDEMPOTENT_FILES:
+        path = data_dir / name
+        if path.is_file():
+            print(f"  {name:<24} {path.stat().st_size:>8,} bytes")
     return EXIT_OK
 
 

@@ -155,6 +155,17 @@ def _range(end_year: int, m1: int, m2: int) -> Period | None:
     )
 
 
+def strip_period_expressions(text: str) -> str:
+    """期間表現を取り除いた残りを返す（cc-sier #728 の残余語判定に使う）。
+
+    「値の左窓に、指標別名・業態別名・期間表現のいずれにも該当しない残余語が
+    あるか」を見るための前処理。期間は正当な修飾語なので残余に数えない。
+    """
+    for pattern in (P_FY_YEAR, P_HALF, P_RANGE, P_FY_END, P_YM, P_MONTH):
+        text = pattern.sub("", text)
+    return text
+
+
 def resolve_with_penalty(window_text: str, pub: date) -> tuple[Period | None, float]:
     """`resolve()` に confidence の減点を添えて返す（実装設計 §4.5 の期間の行）。
 
