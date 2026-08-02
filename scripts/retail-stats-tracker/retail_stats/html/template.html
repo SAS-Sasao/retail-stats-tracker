@@ -1,0 +1,32 @@
+<!--
+  骨格テンプレート（プレースホルダのみ）。実装設計 §6 / §8 M6 で実装する。
+
+  html/build.py の render() がこのファイルに series.json（JSON）、
+  app.js、styles.css、vendor/chart.umd.min.js をインライン埋め込みして
+  docs/retail-stats/index.html を生成する。
+
+  必須プレースホルダ（実装時に置換ロジックを実装する）:
+    {{STYLES}}       ← styles.css の内容を <style> に埋め込む
+    {{SERIES_JSON}}  ← series.json を <script type="application/json"> に埋め込む
+    {{VENDOR_JS}}    ← vendor/chart.umd.min.js の内容を <script> に埋め込む
+    {{APP_JS}}        ← app.js の内容を <script> に埋め込む
+
+  禁則（NFR-08）: 埋め込み後の HTML に src="http" / fetch( / import( を
+  含めないこと。`</script>` 脱出が起きないよう埋め込み時にエスケープすること
+  （実装設計 §7.1 html/build のテスト方針）。
+-->
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>小売月次統計トラッカー</title>
+  <style>{{STYLES}}</style>
+</head>
+<body>
+  <!-- SC-01〜SC-06 の描画領域。詳細は implementation-design.md §6 を参照 -->
+  <div id="app"></div>
+  <script type="application/json" id="series-data">{{SERIES_JSON}}</script>
+  <script>{{VENDOR_JS}}</script>
+  <script>{{APP_JS}}</script>
+</body>
+</html>

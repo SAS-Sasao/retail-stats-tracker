@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# 一時ファイル（scripts/retail-stats-tracker/tests/make_fixtures.py 等の
+# 作業用出力。生成データそのもの（data/*.json）は将来コミット対象になるため
+# ここでは除外しない）
+/tmp/
+*.tmp

@@ -1,0 +1,5 @@
+PLACEHOLDER
+
+実際の Chart.js 本体（MIT License）を vendoring する際、公式配布物に
+同梱される LICENSE.md をこのファイルに配置すること（実装設計 §9.1 P5）。
+https://github.com/chartjs/Chart.js/blob/master/LICENSE.md
