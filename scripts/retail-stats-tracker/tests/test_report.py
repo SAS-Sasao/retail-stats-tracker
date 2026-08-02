@@ -136,5 +136,69 @@ class TestBreakdowns(unittest.TestCase):
         self.assertEqual(samples["no_numeric"], report.unresolved_samples(rows, limit=20)["no_numeric"])
 
 
+class TestDiffReport(unittest.TestCase):
+    """FR-22 / 要件リスク 7-8: 値が変わった observation の前後を必ず出す。"""
+
+    def _results(self):
+        from retail_stats import store
+
+        index = {}
+        created = store.upsert(index, obs("shopping-center", "existing-store-sales-yoy"))
+        # 速報 → 確報の改定を模す（confidence が上がって値が変わる）
+        updated = store.upsert(
+            index,
+            obs("shopping-center", "existing-store-sales-yoy", value=-1.9)._replace_confidence(0.99)
+            if hasattr(obs("shopping-center", "existing-store-sales-yoy"), "_replace_confidence")
+            else _bump(obs("shopping-center", "existing-store-sales-yoy", value=-1.9)),
+        )
+        return [created, updated]
+
+    def test_value_change_is_listed_with_before_and_after(self):
+        results = self._results()
+        q = report.build_quality_summary([], [], [], CATALOG)
+        d = report.build_diff_report(results, [], q)
+        self.assertEqual(d["counts"]["created"], 1)
+        self.assertEqual(d["counts"]["updated"], 1)
+        self.assertEqual(len(d["value_changes"]), 1)
+        change = d["value_changes"][0]
+        self.assertEqual(change["before"]["value"], 1.0)
+        self.assertEqual(change["after"]["value"], -1.9)
+        self.assertTrue(d["has_changes"])
+
+    def test_no_changes_means_no_report(self):
+        """差分 0 の日はレポートを出さない（H2 のトリアージ負荷を減らす）。"""
+        q = report.build_quality_summary([], [], [], CATALOG)
+        d = report.build_diff_report([], [], q)
+        self.assertFalse(d["has_changes"])
+
+    def test_markdown_states_the_nfr_verdicts(self):
+        q = report.build_quality_summary([], [], [], CATALOG)
+        md = report.format_diff_report_markdown(report.build_diff_report(self._results(), [], q))
+        self.assertIn("NFR-05", md)
+        self.assertIn("NFR-04", md)
+        self.assertIn("値が変わった観測", md)
+        self.assertIn("未達", md)
+
+    def test_manual_override_protection_is_reported(self):
+        """FR-23 で保護された観測を黙って落とさない。"""
+        from retail_stats import store
+
+        index = {}
+        store.upsert(index, obs("shopping-center", "existing-store-sales-yoy")
+                     .__class__(**{**obs("shopping-center", "existing-store-sales-yoy").__dict__,
+                                   "manual_override": True}))
+        skipped = store.upsert(index, obs("shopping-center", "existing-store-sales-yoy", value=9.9))
+        q = report.build_quality_summary([], [], [], CATALOG)
+        d = report.build_diff_report([skipped], [], q)
+        self.assertEqual(d["counts"]["skipped_manual"], 1)
+        self.assertEqual(len(d["skipped_manual_keys"]), 1)
+
+
+def _bump(o):
+    from dataclasses import replace
+
+    return replace(o, confidence=0.99)
+
+
 if __name__ == "__main__":
     unittest.main()

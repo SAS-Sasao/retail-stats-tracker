@@ -554,8 +554,14 @@ M3 実装中に §4.3 の内部で 3 点の不整合が見つかった。とく�
 | # | 内容 | 状態 |
 |---|---|---|
 | N-3f-1 | M6 で `docs/retail-stats/index.html` を生成 | **完了**。425 KB（上限 2 MB）／外部参照 0 件／`file://` で動作 |
-| N-3f-2 | cc-sier の `docs/index.html` に retail-stats のカードを 1 枚追加 | **未着手（M7）** |
-| N-3f-3 | 生成物を cc-sier へ反映する PR 経路 | 未着手（CI/CD Stage 1） |
+| N-3f-2 | cc-sier のポータルに retail-stats のカードを追加 | **完了**（[cc-sier #731](https://github.com/SAS-Sasao/cc-sier-organization/pull/731)） |
+| N-3f-3 | 生成物を cc-sier へ反映する PR | **完了**（同 PR に同梱） |
+
+**カードは `docs/index.html` ではなく `.claude/hooks/generate-dashboard.sh`（生成器）に
+置いた。** 同ファイルは `/company-dashboard` 実行時にヒアドキュメントから再生成されて
+commit+push されるため、出力を直接編集するとカードが消える。既存の TodoInsights カードと
+同じ `if Path(...).exists()` の条件付きパターンに倣ったので、配信ページが無い環境では
+出ず壊れたリンクにならない。
 
 Chart.js 4.4.1（MIT）を vendoring した（205 KB）。ライセンス全文を
 `html/vendor/LICENSE-chartjs` に同梱している。

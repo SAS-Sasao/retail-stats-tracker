@@ -6,10 +6,11 @@
 
 ## 状態
 
-**M1 / M2 / M3 完了、golden-60 凍結済み。次は M4（永続化）→ M6（HTML 生成）。**
+**M1〜M4 / M6 / M7 完了。M5（LLM フォールバック）のみ未着手。**
 
-M3 の計測結果: NFR-04 = 100%（達成）/ NFR-05 = 68.4%（未達、目標 80%）。
-未達の 17 行はいずれも実装のバグではなくカタログ・設計側の論点。
+計測結果: NFR-04 = 100%（達成）/ NFR-05 = 63.7%（未達、目標 80%）。
+未達分はカタログ・設計側の論点（cc-sier #728 / #729 で対応中）であり実装のバグではない。
+SC-06 のデータ品質パネルに達成率と分母の定義を明示している。
 進捗と再開点は `docs/design/origin.md` の D-E を参照。設計は
 [cc-sier-organization](https://github.com/SAS-Sasao/cc-sier-organization)
 リポジトリの組織「domain-tech-collection」で策定された。
@@ -56,7 +57,9 @@ python3 -m unittest discover -s scripts/retail-stats-tracker/tests
 ローカルプレビューできる（NFR-08 で単一 HTML に自己完結しており、
 ネットワークを切っても全機能が動く）。
 
-**M6 が未実装のため、現時点ではまだ生成されていない。**
+ポータルの導線は cc-sier の `.claude/hooks/generate-dashboard.sh`（生成器）に
+条件付きで追加してある。`docs/index.html` を直接編集すると `/company-dashboard` の
+次回実行で上書きされて消えるため、**カードの定義は生成器側に置く**こと。
 
 ## ライセンス・組織情報
 
