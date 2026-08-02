@@ -122,6 +122,10 @@ def _print_resolved_inputs(org: str) -> dict[str, str]:
     print(f"                    source={info['catalog_source']} exists={info['catalog_exists']}")
     print(f"  digest_dir      : {info['digest_dir']} (exists={info['digest_dir_exists']})")
     print(f"  data_dir        : {info['data_dir']}")
+    # 配信先も必ず出す。どこに書き出してどこで見えるのかが分からないまま
+    # 実行できてしまうと、Pages に載らない場所へ出力していても気づけない（D-G）
+    print(f"  html_output     : {info['html_output_path']}")
+    print(f"  公開 URL        : {info['html_public_url']}")
     return info
 
 
