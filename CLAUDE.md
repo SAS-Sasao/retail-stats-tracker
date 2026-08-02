@@ -34,6 +34,7 @@ retail-stats-tracker/
 ├── docs/
 │   └── design/            ← 設計成果物のスナップショット（cc-sier から切り出し）
 ├── scripts/retail-stats-tracker/
+│   ├── validate_catalog.py ← IF-02 契約検査 C1〜C12（段階0 のゲート本体）
 │   ├── retail_stats/      ← 実装コード本体
 │   │   ├── __main__.py    ← python3 -m retail_stats のエントリ
 │   │   ├── cli.py / config.py / models.py / textnorm.py
@@ -41,9 +42,21 @@ retail-stats-tracker/
 │   │   ├── llm.py / cache.py / store.py / report.py
 │   │   └── html/           ← 単一 HTML 生成器
 │   └── tests/              ← unittest（実装設計 §7.2 のテストケースに対応）
-├── .claude/agents/          ← Subagent 定義（maker 4 + checker 1 + 抽出器 1）
+│       └── fixtures/       ← テストの唯一の入力（実データの所在に依存しない）
+├── .claude/
+│   ├── agents/             ← Subagent 定義（maker 4 + checker 1 + 抽出器 1）
+│   ├── settings.json       ← 検証 hooks（B 系統）の配線
+│   └── hooks/verify/retail-stats/  ← 検証 hooks 本体（loop 設計 §2.3）
 └── docs/retail-stats/       ← 配信 HTML（IF-05。実装後に生成）
 ```
+
+## 入力データの所在
+
+`--org SLUG` は組織スラグでありパスではない。データ層が別リポジトリ
+（cc-sier-organization）にある場合は `.companies/` を含むディレクトリだけを
+環境変数 `RETAIL_STATS_WORKSPACE` で差し替える。カタログのみ、正準パスが
+無いとき `docs/design/retail-monthly-kpi-catalog.md` にフォールバックする。
+経緯と選択肢の比較は `docs/design/origin.md` D-A を参照。
 
 ## 開発ルール
 
