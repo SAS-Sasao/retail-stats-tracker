@@ -4,7 +4,11 @@
 body{margin:0;font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;
 color:var(--fg);background:var(--bg);line-height:1.7;font-size:15px}
 header,nav,section,footer{max-width:1080px;margin:0 auto;padding:0 20px}
-header{padding-top:28px}
+header{padding-top:20px}
+.backlink{margin:0 0 10px;font-size:13px}
+.backlink a{color:var(--accent);text-decoration:none;border:1px solid var(--line);
+border-radius:999px;padding:4px 12px;display:inline-block;background:var(--panel)}
+.backlink a:hover{border-color:var(--accent)}
 h1{font-size:22px;margin:0 0 4px}
 h2{font-size:18px;border-bottom:2px solid var(--line);padding-bottom:6px;margin:28px 0 16px}
 h3{font-size:15px;margin:20px 0 8px}
@@ -48,7 +52,7 @@ padding-top:12px;padding-bottom:28px}
 button{cursor:pointer;font-size:14px;padding:6px 14px;border:1px solid var(--line);
 border-radius:4px;background:var(--panel);color:var(--fg)}
 @media print{
-  .tabs,.controls,button{display:none!important}
+  .tabs,.controls,button,.backlink{display:none!important}
   .view{display:block!important;page-break-inside:avoid}
   .view[hidden]{display:block!important}
   .chartbox{height:300px;page-break-inside:avoid}
