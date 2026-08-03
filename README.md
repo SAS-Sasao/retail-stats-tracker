@@ -6,11 +6,15 @@
 
 ## 状態
 
-**M1〜M4 / M6 / M7 完了。M5（LLM フォールバック）のみ未着手。**
+**M1〜M4 / M6 / M7 完了。サイト公開中。M5（LLM フォールバック）のみ未着手。**
 
-計測結果: NFR-04 = 100%（達成）/ NFR-05 = 63.7%（未達、目標 80%）。
-未達分はカタログ・設計側の論点（cc-sier #728 / #729 で対応中）であり実装のバグではない。
+公開 URL: https://sas-sasao.github.io/cc-sier-organization/retail-stats/
+
+計測結果: NFR-04 = 100%（達成）/ NFR-05 = 53/79 = 67.1%（未達、目標 80%）。
+母数は 2026-08-03 までのダイジェスト 110 ファイル / 一意 439 記事。
+設計原本は v0.1.2 に同期済み（cc-sier #724 / #725 / #728 / #729 すべて決着）。
 SC-06 のデータ品質パネルに達成率と分母の定義を明示している。
+次にやることは `docs/design/origin.md` の D-E を参照。
 進捗と再開点は `docs/design/origin.md` の D-E を参照。設計は
 [cc-sier-organization](https://github.com/SAS-Sasao/cc-sier-organization)
 リポジトリの組織「domain-tech-collection」で策定された。
