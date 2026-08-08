@@ -351,5 +351,112 @@ class TestGolden60Frozen(unittest.TestCase):
                 )
 
 
+# 決定論パースが golden-60 の期待値と一致した行数（2026-08-08 の実測）。
+# 残る 9 行のギャップは 2 原因しか無い。どちらも決まれば上がるので、**下限として**
+# 固定する（左窓を緩めたら、カタログに別名を足したら、この値を上げること）。
+#
+#   sales-amount-absolute  7 行  C-3b。未決事項 (a)「左窓の緩和」待ち
+#   inbound-sales-yoy      2 行  `インバウンド` の別名がカタログに無い（D-E ②）
+GOLDEN60_AGREEMENT = 49
+
+# 上記 2 原因に対応する metric_id。**これ以外の欠落が出たら回帰**である。
+KNOWN_GAP_METRICS = {"sales-amount-absolute", "inbound-sales-yoy"}
+
+
+class TestGolden60Agreement(unittest.TestCase):
+    """凍結済み期待値に対する決定論パースの一致率を固定する。
+
+    golden-60 は「実装がどう動くか」ではなく「何が正解か」を持つ。したがって
+    **不一致は必ずしもバグではない**（設計が未決の論点で取れないだけのこともある）。
+    ただし不一致を数えずに放置すると、取れていたはずの行が取れなくなっても
+    誰も気づかない。**下限として固定し、下回ったら落とす。**
+    """
+
+    def setUp(self):
+        if not FROZEN.is_file():
+            self.skipTest("golden-60.jsonl は未凍結")
+        self.rows = _load(FROZEN)
+
+    def _agreement(self):
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        from retail_stats import catalog as cat, config
+        from retail_stats import parser as parser_mod
+        from retail_stats.models import DigestRow
+
+        catalog = cat.load(config.catalog_path())
+        agreed, gaps = 0, []
+        for index, row in enumerate(self.rows):
+            digest_row = DigestRow(
+                digest_date=row["first_digest_date"], row_index=index,
+                title=row["title"], url=row["url"],
+                source_name=row.get("source_name") or "", summary="",
+                raw_line=row["title"],
+            )
+            result = parser_mod.parse_row(digest_row, catalog, "g%04d" % index)
+            expected = row["expected"]
+            if isinstance(expected, dict):
+                codes = {u.reason_code for u in result.unresolved}
+                ok = expected["unresolved"]["reason_code"] in codes and not result.observations
+                missing = set()
+            else:
+                want = {
+                    (o["segment_id"], o["metric_id"], o["scope"],
+                     o["period_key"], o["source_authority"])
+                    for o in expected
+                }
+                got = {
+                    (o.segment_id, o.metric_id, o.scope, o.period_key, o.source_authority)
+                    for o in result.observations
+                }
+                missing = want - got
+                ok = not missing
+            agreed += ok
+            if not ok:
+                gaps.append((row["title"], {k[1] for k in missing}, result))
+        return agreed, gaps
+
+    def test_agreement_does_not_regress(self):
+        agreed, gaps = self._agreement()
+        self.assertGreaterEqual(
+            agreed, GOLDEN60_AGREEMENT,
+            "golden-60 との一致が %d 行に後退した（下限 %d）。取れなくなった行:\n  - %s"
+            % (agreed, GOLDEN60_AGREEMENT, "\n  - ".join(t for t, _, _ in gaps)),
+        )
+
+    def test_known_gaps_have_only_the_two_known_causes(self):
+        """残るギャップの原因が 2 つから増えていないこと。
+
+        `販売額2.2％増の5547億円` の金額側が取れないのが C-3b（左窓の起点が
+        「直前の値トークンの終端」なので左窓が `の` になり指標が解決しない）。
+        `インバウンド16.7％増` はカタログに別名が無い。**どちらも決着すれば
+        取れる**。別の metric_id が欠け始めたら、それは未決事項ではなく回帰である。
+        """
+        _, gaps = self._agreement()
+        for title, missing_metrics, _ in gaps:
+            with self.subTest(title=title):
+                self.assertTrue(
+                    missing_metrics <= KNOWN_GAP_METRICS,
+                    "既知の 2 原因以外で欠落した: %s" % sorted(missing_metrics - KNOWN_GAP_METRICS),
+                )
+
+    def test_gap_rows_still_retain_the_value(self):
+        """FR-10: 取れなかった値が痕跡なく消えていないこと。
+
+        **一致率よりこちらが重要。** 取れないこと自体は未決事項の結果であり
+        許容できるが、値が observation にも unresolved にも現れない状態
+        （silent loss）は「いかなる理由があっても許容しない」（cc-sier #728）。
+        """
+        _, gaps = self._agreement()
+        for title, _, result in gaps:
+            with self.subTest(title=title):
+                self.assertIn(
+                    "no_metric_match_in_multi_value",
+                    {u.reason_code for u in result.unresolved},
+                    "取れなかった値が退避されていない（silent loss）",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
